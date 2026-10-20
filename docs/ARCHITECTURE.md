@@ -1,6 +1,6 @@
 # Architecture proposal
 
-Status: proposed, 2026-10-20. Rust implementation begins after visual selection. M0 must prove rendering before this becomes an accepted runtime architecture.
+Status: provisional, 2026-10-20. The first Windows audio slice implements part of this structure. M0 must still prove Linux video rendering before the renderer and full runtime architecture are accepted.
 
 ## Stack and structure
 
@@ -91,6 +91,8 @@ Scans traverse only user-selected roots, do not follow directory symlinks by def
 ## Playback and queue behavior
 
 Keep queue transitions as pure Rust logic with tests. Explicit Next/Previous follow the selected order; repeat-one applies to natural end-of-media, not manual Next. Repeat-all wraps; repeat-off stops at the end. Shuffle preserves a current entry and a stable shuffled traversal until the queue changes; Previous follows actual history. Define removal/reorder of the currently playing entry before implementation. One terminal event advances a load at most once. Playback errors surface the failing item and stop automatic advancement to prevent loops.
+
+For the music list, activating a song row starts that song immediately. Each row has a leading accessible checkbox; the list-level Select all applies to the rows currently displayed after filters, and Play selected queues checked rows in displayed order and starts the first. Adding checked tracks to a playlist uses that same displayed order and targets either a new named playlist or one chosen from the playlist list. An opened playlist can shuffle its stored track order, which updates the visible order immediately. Checkbox changes alone never start playback. Switching between Movies and Music preserves the current queue and playback state. The HTML preview and first native slice keep playlists for the current session; native playlist persistence remains part of T14.
 
 Persist resume every five seconds and on pause, stop, item switch, and coordinated exit. Restore stopped/paused rather than auto-playing. Offer Resume/Start over when a video position exceeds ten seconds and is below completion. Default video completion is 95% of known duration or natural end; test short/unknown-duration media separately. Never mark complete just because a user manually stopped. Music starts at the beginning by default; history may still record the track. All thresholds live in one module and remain documented.
 

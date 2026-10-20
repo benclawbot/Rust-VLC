@@ -1,0 +1,518 @@
+import { Button, CheckBox, LineEdit, ListView } from "std-widgets.slint";
+
+export struct TrackRow {
+    id: int,
+    title: string,
+    detail: string,
+    selected: bool,
+}
+
+export struct PlaylistRow {
+    id: int,
+    name: string,
+    track-count: int,
+}
+
+export component AppWindow inherits Window {
+    title: "VLC Première";
+    width: 1180px;
+    height: 790px;
+    background: #141312;
+    default-font-family: "Inter";
+    default-font-size: 14px;
+
+    in property <string> current-view: "music";
+    in property <[TrackRow]> tracks: [];
+    in property <[PlaylistRow]> playlists: [];
+    in property <bool> has-tracks: false;
+    in property <bool> has-selection: false;
+    in property <bool> has-selected-playlist: false;
+    in property <bool> can-shuffle-selected-playlist: false;
+    in property <int> selected-playlist-id: -1;
+    in property <string> selected-playlist-order: "Select a playlist to view its track order.";
+    in-out property <bool> select-all-checked: false;
+    in property <bool> select-all-enabled: false;
+    in property <int> selected-count: 0;
+    in property <int> visible-count: 0;
+    in-out property <string> search-query: "";
+    in-out property <string> new-playlist-name: "";
+    in property <bool> runtime-ready: false;
+    in property <bool> runtime-available: false;
+    in property <string> runtime-message: "Looking for libVLC 3…";
+    in property <bool> has-current-track: false;
+    in property <string> current-title: "No track selected";
+    in property <string> player-state: "Ready";
+    in property <string> player-time: "0:00";
+    in property <string> player-duration: "0:00";
+    in property <string> queue-position: "No queue";
+    in property <bool> can-toggle-pause: false;
+    in property <bool> is-paused: false;
+    in property <string> status-message: "";
+
+    callback navigate(string);
+    callback open-audio-files();
+    callback search-changed(string);
+    callback select-all(bool);
+    callback select-playlist(int);
+    callback shuffle-selected-playlist();
+    callback create-playlist(string);
+    callback playlist-name-changed(string);
+    callback add-selected-to-playlist();
+    callback toggle-track(int, bool);
+    callback play-track(int);
+    callback play-selected();
+    callback previous();
+    callback toggle-pause();
+    callback next();
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: 70px;
+            background: #141312;
+
+            HorizontalLayout {
+                padding-left: 26px;
+                padding-right: 28px;
+                spacing: 16px;
+
+                Text {
+                    text: "PREMIÈRE";
+                    color: #f46b32;
+                    font-family: "Inter";
+                    font-size: 18px;
+                    font-weight: 760;
+                    letter-spacing: 0.5px;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: "LOCAL LIBRARY";
+                    color: #aaa196;
+                    font-family: "Inter";
+                    font-size: 10px;
+                    font-weight: 680;
+                    letter-spacing: 1.4px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            background: #141312;
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                padding-left: 34px;
+                padding-right: 34px;
+                padding-top: 22px;
+                padding-bottom: 18px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    height: 42px;
+                    spacing: 8px;
+
+                    Button {
+                        text: "Movies";
+                        primary: root.current-view == "movies";
+                        clicked => root.navigate("movies");
+                    }
+
+                    Button {
+                        text: "Music";
+                        primary: root.current-view == "music";
+                        clicked => root.navigate("music");
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+                HorizontalLayout {
+                    height: 56px;
+                    spacing: 16px;
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "YOUR COLLECTION";
+                            color: #f46b32;
+                            font-size: 10px;
+                            font-weight: 700;
+                            letter-spacing: 1.3px;
+                        }
+
+                        Text {
+                            text: root.current-view == "music" ? "Music" : "Movies";
+                            color: #e7ddcc;
+                            font-family: "Inter";
+                            font-size: 32px;
+                            font-weight: 720;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    if root.current-view == "music": Button {
+                        text: "Add local audio";
+                        primary: true;
+                        clicked => root.open-audio-files();
+                    }
+                }
+
+                if root.current-view == "music": Rectangle {
+                    height: 204px;
+                    background: #211e1b;
+                    border-color: #3b3631;
+                    border-width: 1px;
+                    border-radius: 8px;
+
+                    VerticalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 7px;
+
+                        HorizontalLayout {
+                            height: 36px;
+                            spacing: 10px;
+
+                            Text {
+                                text: "PLAYLISTS";
+                                color: #e7ddcc;
+                                font-size: 13px;
+                                font-weight: 680;
+                                vertical-alignment: center;
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            LineEdit {
+                                width: 220px;
+                                text <=> root.new-playlist-name;
+                                placeholder-text: "New playlist name";
+                                accessible-label: "New playlist name";
+                                edited(text) => root.playlist-name-changed(text);
+                            }
+
+                            Button {
+                                text: "Create";
+                                enabled: root.new-playlist-name != "";
+                                clicked => root.create-playlist(root.new-playlist-name);
+                            }
+                        }
+
+                        ListView {
+                            height: 56px;
+                            accessible-role: list;
+
+                            for playlist in root.playlists: Rectangle {
+                                height: 38px;
+
+                                Button {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    text: playlist.name + "    ·    " + playlist.track-count + " tracks";
+                                    primary: playlist.id == root.selected-playlist-id;
+                                    accessible-label: "Select playlist " + playlist.name;
+                                    clicked => root.select-playlist(playlist.id);
+                                }
+                            }
+                        }
+
+                        Text {
+                            height: 24px;
+                            text: root.selected-playlist-order;
+                            color: #aaa196;
+                            font-size: 11px;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+
+                        HorizontalLayout {
+                            height: 34px;
+                            spacing: 10px;
+
+                            Text {
+                                text: "Playlists stay in this session only.";
+                                color: #aaa196;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            Button {
+                                text: "Shuffle order";
+                                enabled: root.can-shuffle-selected-playlist;
+                                clicked => root.shuffle-selected-playlist();
+                            }
+
+                            Button {
+                                text: "Add checked tracks";
+                                enabled: root.has-selection && root.has-selected-playlist;
+                                primary: true;
+                                clicked => root.add-selected-to-playlist();
+                            }
+                        }
+                    }
+                }
+
+                if root.runtime-ready && !root.runtime-available: Rectangle {
+                    background: #2b211c;
+                    border-color: #5a392a;
+                    border-width: 1px;
+                    border-radius: 6px;
+                    height: 58px;
+
+                    Text {
+                        x: 14px;
+                        y: 8px;
+                        width: parent.width - 28px;
+                        height: parent.height - 16px;
+                        color: #e7ddcc;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        text: root.runtime-message;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.current-view == "music" && root.has-tracks: HorizontalLayout {
+                    height: 48px;
+                    spacing: 12px;
+
+                    LineEdit {
+                        text <=> root.search-query;
+                        placeholder-text: "Search tracks or filenames";
+                        edited(text) => root.search-changed(text);
+                        horizontal-stretch: 1;
+                        accessible-label: "Search local audio tracks";
+                    }
+
+                    CheckBox {
+                        text: "Select all";
+                        checked <=> root.select-all-checked;
+                        enabled: root.select-all-enabled;
+                        toggled => root.select-all(self.checked);
+                    }
+
+                    Text {
+                        text: root.selected-count + " selected · " + root.visible-count + " shown";
+                        color: #aaa196;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+
+                    Button {
+                        text: "Play selected";
+                        primary: true;
+                        enabled: root.has-selection;
+                        clicked => root.play-selected();
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #3b3631;
+                }
+
+                if root.current-view == "music" && root.has-tracks: VerticalLayout {
+                        vertical-stretch: 1;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            height: 26px;
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 12px;
+
+                            Text { text: "TRACK"; color: #8f877d; font-size: 9px; font-weight: 700; letter-spacing: 1.1px; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: "SOURCE"; color: #8f877d; font-size: 9px; font-weight: 700; letter-spacing: 1.1px; vertical-alignment: center; }
+                        }
+
+                        ListView {
+                            vertical-stretch: 1;
+                            accessible-role: list;
+
+                            for track[index] in root.tracks: Rectangle {
+                                height: 62px;
+                                background: Math.mod(index, 2) == 0 ? #1b1917 : #171614;
+                                border-radius: 4px;
+                                accessible-role: list-item;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    padding-top: 6px;
+                                    padding-bottom: 6px;
+                                    spacing: 10px;
+
+                                    CheckBox {
+                                        width: 30px;
+                                        text: "";
+                                        checked: track.selected;
+                                        accessible-label: "Select " + track.title;
+                                        toggled => root.toggle-track(track.id, self.checked);
+                                    }
+
+                                    Button {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        text: track.title + "    ·    " + track.detail;
+                                        accessible-label: "Play " + track.title;
+                                        clicked => root.play-track(track.id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                if root.current-view == "music" && !root.has-tracks: Rectangle {
+                        vertical-stretch: 1;
+                        background: #1b1917;
+                        border-color: #3b3631;
+                        border-width: 1px;
+                        border-radius: 8px;
+
+                        VerticalLayout {
+                            x: 30px;
+                            y: 28px;
+                            width: parent.width - 60px;
+                            height: parent.height - 56px;
+                            spacing: 14px;
+
+                            Text {
+                                text: "Start with your own music";
+                                color: #e7ddcc;
+                                font-size: 23px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: "Choose local audio files to build this library. Track titles use their filenames until local metadata support is added.";
+                                color: #aaa196;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                                max-width: 520px;
+                            }
+
+                            Button {
+                                text: "Choose audio files";
+                                primary: true;
+                                clicked => root.open-audio-files();
+                            }
+                        }
+                    }
+
+                if root.current-view == "movies": Rectangle {
+                        vertical-stretch: 1;
+                        background: #1b1917;
+                        border-color: #3b3631;
+                        border-width: 1px;
+                        border-radius: 8px;
+
+                        VerticalLayout {
+                            x: 30px;
+                            y: 28px;
+                            width: parent.width - 60px;
+                            height: parent.height - 56px;
+                            spacing: 12px;
+
+                            Text {
+                                text: "Movie browsing is not part of this audio slice";
+                                color: #e7ddcc;
+                                font-size: 21px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: "Your current audio queue keeps playing while you browse this view.";
+                                color: #aaa196;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+
+                            Button {
+                                text: "Return to Music";
+                                clicked => root.navigate("music");
+                            }
+                        }
+                    }
+
+                if root.status-message != "": Text {
+                        text: root.status-message;
+                        color: #e7ddcc;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+            }
+        }
+
+        Rectangle {
+            height: 104px;
+            background: #211e1b;
+            border-color: #3b3631;
+            border-width: 1px;
+
+            HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 14px;
+                padding-bottom: 14px;
+                spacing: 20px;
+
+                VerticalLayout {
+                    spacing: 5px;
+
+                    Text {
+                        text: "NOW PLAYING";
+                        color: #f46b32;
+                        font-size: 9px;
+                        font-weight: 700;
+                        letter-spacing: 1.4px;
+                    }
+
+                    Text {
+                        text: root.current-title;
+                        color: #e7ddcc;
+                        font-size: 16px;
+                        font-weight: 650;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: root.player-state + "  ·  " + root.queue-position;
+                        color: #aaa196;
+                        font-size: 11px;
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: root.player-time + " / " + root.player-duration;
+                    color: #aaa196;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+
+                Button { text: "Previous"; enabled: root.has-current-track; clicked => root.previous(); }
+                Button {
+                    text: root.is-paused ? "Resume" : "Pause";
+                    enabled: root.can-toggle-pause;
+                    primary: true;
+                    clicked => root.toggle-pause();
+                }
+                Button { text: "Next"; enabled: root.has-current-track; clicked => root.next(); }
+            }
+        }
+    }
+}

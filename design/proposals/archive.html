@@ -23,7 +23,6 @@
       --accent: #f46b32;
       --line: #3b3631;
       --panel: #211e1b;
-      --sidebar-width: 204px;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       font-synthesis: none;
       text-rendering: optimizeLegibility;
@@ -54,182 +53,51 @@
       outline-offset: 3px;
     }
 
-    .sidebar {
-      position: fixed;
-      z-index: 5;
-      inset: 0 auto 0 0;
-      display: flex;
-      width: var(--sidebar-width);
-      flex-direction: column;
-      padding: 28px 18px 20px;
-      border-right: 1px solid var(--line);
-      background: #181614;
-    }
-
-    .brand {
-      display: flex;
-      flex-direction: column;
-      width: fit-content;
-      margin: 1px 0 43px 4px;
-      gap: 5px;
-    }
-
-    .brand-name {
-      color: var(--paper);
-      font-size: 15px;
-      font-weight: 760;
-      letter-spacing: .16em;
-    }
-
-    .brand-context {
-      color: var(--muted);
-      font-size: 9px;
-      font-weight: 650;
-      letter-spacing: .15em;
-      text-transform: uppercase;
-    }
-
-    .nav-group + .nav-group { margin-top: 33px; }
-
-    .nav-heading {
-      margin: 0 0 11px 9px;
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 680;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
-
-    .route-list, .local-list { display: grid; gap: 4px; }
-
-    .route-link, .local-view {
-      display: flex;
-      min-height: 38px;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 0 10px;
-      border: 1px solid transparent;
-      border-radius: 5px;
-      color: var(--muted);
-      background: transparent;
-      font-size: 12px;
-      font-weight: 570;
-      text-align: left;
-      transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
-    }
-
-    .route-link:hover, .local-view:hover {
-      color: var(--paper);
-      background: #211e1b;
-    }
-
-    .route-link[aria-current="page"] {
-      color: var(--paper);
-      border-color: #493a30;
-      background: #29221d;
-    }
-
-    .route-link[aria-current="page"]::before {
-      width: 3px;
-      height: 15px;
-      margin-left: -11px;
-      border-radius: 0 2px 2px 0;
-      background: var(--accent);
-      content: "";
-    }
-
-    .local-view {
-      width: 100%;
-      border: 0;
-      cursor: pointer;
-    }
-
-    .local-view[aria-pressed="true"] {
-      color: var(--paper);
-      background: #29221d;
-    }
-
-    .nav-count {
-      min-width: 20px;
-      color: #81776d;
-      font-size: 10px;
-      font-variant-numeric: tabular-nums;
-      text-align: right;
-    }
-
-    .sidebar-bottom {
-      display: grid;
-      gap: 6px;
-      margin-top: auto;
-      padding: 17px 8px 0;
-      border-top: 1px solid var(--line);
-      color: #81776d;
-      font-size: 10px;
-      line-height: 1.5;
-    }
-
-    .sidebar-bottom strong {
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 620;
-    }
-
-    .mobile-nav { display: none; }
-
     .media-switch {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 3px;
-      padding: 3px;
-      border: 1px solid var(--line);
-      border-radius: 5px;
-      background: #1b1917;
+      gap: 4px;
+      width: min(100%, 360px);
+      padding: 4px;
+      border: 1px solid #57483c;
+      border-radius: 7px;
+      background: #1d1a17;
     }
 
     .media-switch button {
-      min-height: 32px;
-      padding: 0 8px;
+      min-height: 42px;
+      padding: 0 14px;
       border: 0;
-      border-radius: 3px;
-      color: var(--muted);
+      border-radius: 4px;
+      color: #c6bbae;
       background: transparent;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 680;
       cursor: pointer;
     }
 
     .media-switch button[aria-pressed="true"] {
-      color: var(--paper);
-      background: #30221a;
-      box-shadow: inset 0 -2px var(--accent);
+      color: #20140e;
+      background: var(--accent);
+      box-shadow: 0 3px 12px rgb(244 107 50 / .18);
     }
-
-    .desktop-media-switch { margin: -18px 0 28px; }
-    .mobile-media-switch { display: none; }
 
     main {
-      width: min(100% - var(--sidebar-width), 1600px);
+      width: min(100%, 1600px);
       min-height: 100dvh;
-      margin-left: var(--sidebar-width);
-      padding: 25px clamp(26px, 3.05vw, 48px) 56px;
+      margin: 0 auto;
+      padding: 22px clamp(24px, 4.2vw, 64px) 56px;
     }
 
-    .topline {
+    .app-topbar {
       display: flex;
-      min-height: 31px;
-      align-items: flex-start;
+      min-height: 58px;
+      align-items: center;
       justify-content: space-between;
-      gap: 20px;
+      gap: 24px;
+      margin-bottom: 5px;
+      padding-bottom: 14px;
       border-bottom: 1px solid var(--line);
-    }
-
-    .breadcrumb {
-      color: #8b8176;
-      font-size: 10px;
-      font-weight: 620;
-      letter-spacing: .08em;
-      text-transform: uppercase;
     }
 
     .preview-label {
@@ -317,6 +185,36 @@
       padding: 2px 0 12px;
       border-bottom: 1px solid var(--line);
     }
+
+    .collection-switch {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 5px;
+      margin: 0;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #1b1917;
+    }
+
+    .collection-view {
+      min-height: 28px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 10px;
+      font-weight: 590;
+      cursor: pointer;
+    }
+
+    .collection-view[aria-pressed="true"] {
+      color: var(--paper);
+      background: #30221a;
+    }
+
+    .collection-count { margin-left: 3px; color: #a3978b; font-size: 9px; }
 
     .genre-filters {
       display: flex;
@@ -608,6 +506,24 @@
       backdrop-filter: blur(3px);
     }
 
+    .playlist-dialog {
+      width: min(460px, calc(100vw - 28px));
+      max-width: none;
+      padding: 26px;
+      border: 1px solid #51473e;
+      border-radius: 7px;
+      color: var(--paper);
+      background: #1e1b18;
+      box-shadow: 0 32px 100px rgb(0 0 0 / .52);
+    }
+
+    .playlist-dialog::backdrop { background: rgb(8 7 6 / .78); backdrop-filter: blur(3px); }
+    .playlist-dialog h2 { margin: 0; font-size: 21px; letter-spacing: -.03em; }
+    .playlist-dialog p { margin: 8px 0 18px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .playlist-dialog label { display: grid; gap: 7px; color: #c9bfb3; font-size: 10px; font-weight: 620; }
+    .playlist-dialog input { min-height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 4px; color: var(--paper); background: #171513; font-size: 12px; }
+    .playlist-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
     .dialog-layout {
       display: grid;
       min-height: 440px;
@@ -822,6 +738,22 @@
       cursor: pointer;
     }
 
+    .music-context-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+
+    .context-shuffle {
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid #5a4538;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #2a211b;
+      font-size: 9px;
+      cursor: pointer;
+    }
+
+    .context-shuffle:disabled { border-color: #39332e; color: #81776d; background: #211e1b; cursor: not-allowed; }
+    .context-shuffle:focus-visible, .context-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
     .album-grid, .artist-grid {
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -830,7 +762,7 @@
 
     .album-card, .artist-card { min-width: 0; }
 
-    .album-art-button, .artist-art-button {
+    .album-art-button, .artist-art-button, .genre-art-button {
       position: relative;
       display: block;
       width: 100%;
@@ -844,7 +776,7 @@
       isolation: isolate;
     }
 
-    .album-art-button::after, .artist-art-button::after {
+    .album-art-button::after, .artist-art-button::after, .genre-art-button::after {
       position: absolute;
       z-index: 0;
       inset: 45% 0 0;
@@ -852,7 +784,7 @@
       content: "";
     }
 
-    .album-art-button img, .artist-art-button img {
+    .album-art-button img, .artist-art-button img, .genre-art-button img {
       position: absolute;
       z-index: -1;
       inset: 0;
@@ -862,9 +794,9 @@
       transition: transform 320ms cubic-bezier(.2,.7,.2,1), filter 220ms ease;
     }
 
-    .album-art-button:hover img, .artist-art-button:hover img { transform: scale(1.035); }
+    .album-art-button:hover img, .artist-art-button:hover img, .genre-art-button:hover img { transform: scale(1.035); }
 
-    .album-art-label, .artist-art-label {
+    .album-art-label, .artist-art-label, .genre-art-label {
       position: absolute;
       z-index: 1;
       right: 11px;
@@ -914,25 +846,15 @@
 
     .genre-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 24px 15px;
     }
 
-    .genre-card {
-      display: grid;
-      min-height: 112px;
-      align-content: space-between;
-      justify-items: start;
-      padding: 15px;
-      border: 1px solid var(--line);
-      border-radius: 5px;
-      background: linear-gradient(135deg, #24201c, #191715);
-      text-align: left;
-    }
+    .genre-card { min-width: 0; }
 
     .genre-card h3 { margin: 0; font-size: 14px; font-weight: 640; }
     .genre-card p { margin: 8px 0 0; color: var(--muted); font-size: 10px; }
-    .genre-card button {
+    .genre-browse {
       min-height: 29px;
       margin-top: 13px;
       padding: 0 9px;
@@ -954,7 +876,7 @@
 
     .audio-track-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(100px, .6fr) auto;
+      grid-template-columns: auto 42px minmax(0, 1fr) minmax(100px, .6fr) auto;
       align-items: center;
       gap: 15px;
       min-height: 66px;
@@ -965,15 +887,25 @@
     }
 
     .audio-track-row:hover, .audio-track-row[aria-current="true"] { border-color: #443a31; background: #1d1a17; }
+    .track-checkbox { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; min-height: 30px; cursor: pointer; }
+    .track-checkbox input, .select-all-tracks input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .track-art-button { width: 42px; height: 42px; overflow: hidden; padding: 0; border: 1px solid #3d3832; border-radius: 3px; background: var(--panel); cursor: pointer; }
+    .track-art-button img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .track-art-button:hover img { transform: scale(1.06); }
     .track-main { min-width: 0; }
     .track-title { margin: 0; font-size: 12px; font-weight: 620; }
+    .track-title-button { padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+    .track-title-button:hover { color: #ffb28e; }
     .track-byline { margin: 4px 0 0; overflow: hidden; color: #92877c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
     .track-genre { margin: 0; color: #aaa095; font-size: 10px; }
     .track-actions { display: flex; align-items: center; gap: 13px; }
     .track-duration { color: #b8aea3; font-size: 10px; font-variant-numeric: tabular-nums; }
-    .track-select {
+    .track-list-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin: 0 0 10px; padding: 8px 12px; border: 1px solid #302b26; border-radius: 4px; }
+    .track-selection-actions, .playlist-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .select-all-tracks { display: inline-flex; align-items: center; gap: 9px; min-height: 30px; color: #c4b9ad; font-size: 10px; cursor: pointer; }
+    .play-selected {
       min-height: 30px;
-      padding: 0 10px;
+      padding: 0 11px;
       border: 1px solid #5a4538;
       border-radius: 4px;
       color: var(--paper);
@@ -981,14 +913,20 @@
       font-size: 10px;
       cursor: pointer;
     }
-    .track-select[aria-pressed="true"] { border-color: var(--accent); color: #ffb28e; }
+    .play-selected:disabled { border-color: #39332e; color: #81776d; background: #211e1b; cursor: not-allowed; }
+    .playlist-select { min-height: 30px; max-width: 190px; padding: 0 22px 0 8px; border: 1px solid #51483f; border-radius: 4px; color: var(--paper); background: #1b1917; font-size: 10px; }
+    .playlist-action { min-height: 30px; padding: 0 10px; border: 1px solid #5a4538; border-radius: 4px; color: var(--paper); background: #2a211b; font-size: 10px; cursor: pointer; }
+    .playlist-action:disabled { border-color: #39332e; color: #81776d; background: #211e1b; cursor: not-allowed; }
+    .playlist-feedback { flex-basis: 100%; min-height: 0; margin: 0; color: #c2b8ac; font-size: 10px; }
+    .playlist-feedback:empty { display: none; }
+    .playlist-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 24px 15px; }
 
     .audio-player {
       position: fixed;
       z-index: 12;
       right: 0;
       bottom: 0;
-      left: var(--sidebar-width);
+      left: 0;
       display: grid;
       grid-template-columns: minmax(145px, .9fr) auto minmax(190px, 1fr) auto;
       align-items: center;
@@ -1064,15 +1002,14 @@
 
     @media (max-width: 1279px) {
       .poster-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-      .album-grid, .artist-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .album-grid, .artist-grid, .genre-grid, .playlist-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .poster-art-title { font-size: clamp(16px, 2vw, 21px); }
     }
 
     @media (max-width: 1023px) {
-      :root { --sidebar-width: 188px; }
-      main { padding-right: 28px; padding-left: 28px; }
+      main { padding-right: 32px; padding-left: 32px; }
       .poster-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 21px 13px; }
-      .album-grid, .artist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 21px 13px; }
+      .album-grid, .artist-grid, .genre-grid, .playlist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 21px 13px; }
       .poster-art-title { font-size: clamp(15px, 2.45vw, 20px); }
       .film-title { font-size: 11px; }
       .catalogue-head { gap: 18px; }
@@ -1081,16 +1018,11 @@
     }
 
     @media (max-width: 900px) {
-      :root { --sidebar-width: 156px; }
-      .sidebar { padding: 23px 12px 17px; }
-      .brand { margin: 2px 0 33px 4px; }
-      .brand-name { font-size: 13px; }
-      .nav-group + .nav-group { margin-top: 26px; }
-      main { padding: 20px 19px 42px; }
+      main { padding: 20px 28px 42px; }
       .catalogue-head { align-items: flex-start; flex-direction: column; }
       .search-block { width: min(100%, 340px); flex: 0 1 auto; }
       .poster-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 14px; }
-      .album-grid, .artist-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 14px; }
+      .album-grid, .artist-grid, .genre-grid, .playlist-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 14px; }
       .poster-art-title { font-size: clamp(18px, 3.15vw, 24px); }
       .toolbar { align-items: flex-start; flex-direction: column; padding-top: 10px; }
       .sort-block { align-self: flex-end; }
@@ -1108,51 +1040,14 @@
     }
 
     @media (max-width: 560px) {
-      :root { --sidebar-width: 0px; }
-      .sidebar {
-        position: sticky;
-        z-index: 6;
-        top: 0;
-        width: 100%;
-        height: auto;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-        padding: 10px 14px;
-        border-right: 0;
-        border-bottom: 1px solid var(--line);
-      }
-      .brand { margin: 0; }
-      .brand-name { font-size: 12px; }
-      .brand-context { display: none; }
-      .nav-group { display: none; }
-      .sidebar-bottom { display: none; }
-      .desktop-media-switch { display: none; }
-      .mobile-media-switch { display: grid; }
-      .mobile-nav {
-        display: grid;
-        width: 100%;
-        grid-template-columns: repeat(3, max-content);
-        gap: 2px 5px;
-      }
-      .mobile-nav a, .mobile-nav button {
-        padding: 8px 7px;
-        border: 0;
-        border-radius: 4px;
-        color: var(--muted);
-        background: transparent;
-        font-size: 9px;
-        text-align: left;
-        cursor: pointer;
-      }
-      .mobile-nav a[aria-current="page"], .mobile-nav button[aria-pressed="true"] { color: var(--paper); background: #29221d; }
-      main { width: 100%; margin: 0; padding: 16px 15px 34px; }
-      .topline { min-height: 28px; gap: 8px; }
-      .breadcrumb, .preview-label { font-size: 8px; }
+      main { width: 100%; margin: 0; padding: 17px 15px 34px; }
+      .app-topbar { align-items: stretch; flex-direction: column; gap: 11px; padding-bottom: 12px; }
+      .media-switch { width: 100%; }
+      .app-topbar .preview-label { align-self: flex-end; font-size: 9px; }
       .catalogue-head { padding: 19px 0 18px; }
       .catalogue-intro { font-size: 11px; }
       .poster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 12px; }
-      .album-grid, .artist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 12px; }
+      .album-grid, .artist-grid, .genre-grid, .playlist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 12px; }
       .poster-art-title { font-size: clamp(19px, 6vw, 25px); }
       .genre-filters { gap: 6px; }
       .genre-chip { min-height: 28px; padding: 0 8px; font-size: 9px; }
@@ -1165,12 +1060,12 @@
       .dialog-actions { margin-top: 15px; padding-top: 8px; }
       .music-toolbar { align-items: flex-start; flex-direction: column; }
       .music-context { align-items: flex-start; flex-direction: column; }
-      .genre-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .audio-track-row { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; padding: 10px 9px; }
+      .audio-track-row { grid-template-columns: auto 36px minmax(0, 1fr) auto; gap: 7px 9px; padding: 10px 9px; }
+      .track-art-button { width: 36px; height: 36px; }
       .track-genre { display: none; }
       .track-actions { gap: 8px; }
+      .track-list-controls { padding: 7px 9px; }
       .audio-player {
-        left: 0;
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas: "context queue" "controls controls" "status status";
         gap: 8px 12px;
@@ -1187,7 +1082,6 @@
     }
 
     @media (max-width: 360px) {
-      .mobile-nav a, .mobile-nav button { padding: 8px 5px; font-size: 8px; }
       .preview-label { white-space: normal; text-align: right; }
       .genre-chip { padding: 0 7px; }
     }
@@ -1203,64 +1097,16 @@
   </style>
 </head>
 <body>
-  <aside class="sidebar" aria-label="Premiere navigation">
-    <a class="brand" href="../index.html" aria-label="Premiere overview">
-      <span class="brand-name">PREMIERE</span>
-      <span class="brand-context">VLC · Local library</span>
-    </a>
-
-    <div class="media-switch desktop-media-switch" role="group" aria-label="Switch library">
-      <button type="button" data-mode="movies" aria-pressed="true">Movies</button>
-      <button type="button" data-mode="music" aria-pressed="false">Music</button>
-    </div>
-
-    <nav class="nav-group" aria-label="Design proposals">
-      <p class="nav-heading">Premiere</p>
-      <div class="route-list">
-        <a class="route-link" href="../index.html">Overview</a>
-        <a class="route-link" href="cinema.html">Cinema</a>
-        <a class="route-link" href="archive.html" aria-current="page">Archive</a>
-        <a class="route-link" href="spotlight.html">Spotlight</a>
-      </div>
-    </nav>
-
-    <nav class="nav-group movie-collection-nav" aria-label="Library views" data-movie-only>
-      <p class="nav-heading">Your collection</p>
-      <div class="local-list">
-        <button class="local-view" type="button" data-view="all" aria-pressed="true">
-          <span>All films</span><span class="nav-count" id="all-count">6</span>
-        </button>
-        <button class="local-view" type="button" data-view="my-list" aria-pressed="false">
-          <span>My list</span><span class="nav-count" id="saved-count">0</span>
-        </button>
-      </div>
-    </nav>
-
-    <div class="sidebar-bottom">
-      <strong>Design preview · sample library</strong>
-      <span>Local interactions only</span>
-    </div>
-    <div class="media-switch mobile-media-switch" role="group" aria-label="Switch library">
-      <button type="button" data-mode="movies" aria-pressed="true">Movies</button>
-      <button type="button" data-mode="music" aria-pressed="false">Music</button>
-    </div>
-    <nav class="mobile-nav" aria-label="Design proposals">
-      <a href="../index.html">Home</a>
-      <a href="cinema.html">Cinema</a>
-      <a href="archive.html" aria-current="page">Archive</a>
-      <a href="spotlight.html">Spotlight</a>
-      <button type="button" data-view="all" aria-pressed="true" data-movie-only>All films</button>
-      <button type="button" data-view="my-list" aria-pressed="false" data-movie-only>My list</button>
-    </nav>
-  </aside>
-
   <main id="catalogue">
-    <div id="movies-view">
-    <div class="topline">
-      <div class="breadcrumb">Premiere <span aria-hidden="true">/</span> Movies</div>
+    <header class="app-topbar">
+      <div class="media-switch" role="group" aria-label="Choose media library">
+      <button type="button" data-mode="movies" aria-pressed="true">Movies</button>
+      <button type="button" data-mode="music" aria-pressed="false">Music</button>
+      </div>
       <div class="preview-label"><span>Design preview</span> · sample library</div>
-    </div>
+    </header>
 
+    <div id="movies-view">
     <header class="catalogue-head">
       <div class="catalogue-title">
         <p class="eyebrow">Your films, in one place</p>
@@ -1275,6 +1121,10 @@
       </div>
     </header>
 
+    <nav class="collection-switch" role="group" aria-label="Browse movie collection" data-movie-only>
+      <button class="collection-view" type="button" data-view="all" aria-pressed="true">All films <span class="collection-count" id="all-count">6</span></button>
+      <button class="collection-view" type="button" data-view="my-list" aria-pressed="false">My list <span class="collection-count" id="saved-count">0</span></button>
+    </nav>
     <section class="toolbar" aria-label="Catalogue controls">
       <div class="genre-filters" id="genre-filters" role="group" aria-label="Filter by genre">
         <button class="genre-chip" type="button" data-genre="all" aria-pressed="true">All films</button>
@@ -1309,16 +1159,11 @@
     </div>
 
     <section class="music-library" id="music-view" hidden aria-labelledby="music-page-title">
-      <div class="topline">
-        <div class="breadcrumb">Premiere <span aria-hidden="true">/</span> Music</div>
-        <div class="preview-label"><span>Design preview</span> · sample library</div>
-      </div>
-
       <header class="catalogue-head">
         <div class="catalogue-title">
           <p class="eyebrow">Artists, albums and tracks</p>
           <h1 id="music-page-title">Music</h1>
-          <p class="catalogue-intro">A local music shelf for browsing sample albums and choosing a track. Preview controls change state only; no audio is loaded.</p>
+          <p class="catalogue-intro">Browse artwork-led albums, artists and genres, scan covered track rows, and collect songs into playlists. Preview controls change state only; no audio is loaded.</p>
         </div>
         <div class="search-block">
           <label for="music-search">Search your music</label>
@@ -1333,6 +1178,7 @@
         <button class="music-tab" type="button" role="tab" id="tab-artists" aria-controls="music-results" aria-selected="false" data-music-view="artists">Artists</button>
         <button class="music-tab" type="button" role="tab" id="tab-tracks" aria-controls="music-results" aria-selected="false" data-music-view="tracks">Tracks</button>
         <button class="music-tab" type="button" role="tab" id="tab-genres" aria-controls="music-results" aria-selected="false" data-music-view="genres">Genres</button>
+        <button class="music-tab" type="button" role="tab" id="tab-playlists" aria-controls="music-results" aria-selected="false" data-music-view="playlists">Playlists</button>
       </nav>
 
       <section class="music-toolbar" aria-label="Music filters and sorting">
@@ -1364,12 +1210,16 @@
       </div>
       <div class="music-context" id="music-context" hidden>
         <span id="music-context-text"></span>
-        <button class="context-clear" type="button" id="clear-music-context">All tracks</button>
+        <span id="playlist-order-status" role="status" aria-live="polite"></span>
+        <div class="music-context-actions">
+          <button class="context-shuffle" type="button" id="shuffle-playlist-order" hidden disabled>Shuffle order</button>
+          <button class="context-clear" type="button" id="clear-music-context">All tracks</button>
+        </div>
       </div>
       <section class="music-results" id="music-results" role="tabpanel" aria-labelledby="tab-albums"></section>
       <section class="empty-state" id="music-empty-state" hidden aria-live="polite">
-        <h3>No music found</h3>
-        <p>Try a different search or genre, or clear the current filters.</p>
+        <h3 id="music-empty-title">No music found</h3>
+        <p id="music-empty-copy">Try a different search or genre, or clear the current filters.</p>
         <button class="clear-filters" type="button" id="clear-music-filters">Clear filters</button>
       </section>
     </section>
@@ -1419,6 +1269,20 @@
         <p class="dialog-feedback" id="dialog-feedback" role="status" aria-live="polite" hidden>Preview only. Playback will connect in the app.</p>
       </div>
     </div>
+  </dialog>
+
+  <dialog class="playlist-dialog" id="playlist-dialog" aria-labelledby="playlist-dialog-title" aria-describedby="playlist-dialog-copy">
+    <form id="create-playlist-form">
+      <h2 id="playlist-dialog-title">Create playlist</h2>
+      <p id="playlist-dialog-copy">The selected tracks will be added in their current list order.</p>
+      <label for="playlist-name">Playlist name
+        <input id="playlist-name" name="playlist-name" type="text" maxlength="60" autocomplete="off" required>
+      </label>
+      <div class="playlist-dialog-actions">
+        <button class="action-button secondary" type="button" id="cancel-playlist">Cancel</button>
+        <button class="action-button primary" type="submit">Create playlist</button>
+      </div>
+    </form>
   </dialog>
 
   <script>
@@ -1559,8 +1423,10 @@
       mode: initialLibraryMode(window.location.hash),
       query: "", genre: "all", view: "all", sort: "added", savedIds: new Set(),
       musicView: "albums", musicQuery: "", musicGenre: "all", musicSort: "recent",
-      selectedAlbumId: null, selectedArtistId: null,
-      player: { queueIds: [], queueIndex: -1, isPlaying: false, queueOpen: false }
+      selectedAlbumId: null, selectedArtistId: null, selectedPlaylistId: null,
+      selectedTrackIds: new Set(), playlists: [], nextPlaylistNumber: 1,
+      playlistTargetId: "", playlistNotice: "", playlistOrderNotice: "", pendingPlaylistTrackIds: [],
+      player: { queueIds: [], queueIndex: -1, isPlaying: false, queueOpen: false, queuePlaylistId: null }
     };
     const filmGrid = document.getElementById("film-grid");
     const searchInput = document.getElementById("film-search");
@@ -1587,7 +1453,15 @@
     const musicResultsStatus = document.getElementById("music-results-status");
     const musicContext = document.getElementById("music-context");
     const musicContextText = document.getElementById("music-context-text");
+    const playlistOrderStatus = document.getElementById("playlist-order-status");
+    const shufflePlaylistButton = document.getElementById("shuffle-playlist-order");
     const musicEmptyState = document.getElementById("music-empty-state");
+    const musicEmptyTitle = document.getElementById("music-empty-title");
+    const musicEmptyCopy = document.getElementById("music-empty-copy");
+    const playlistDialog = document.getElementById("playlist-dialog");
+    const playlistNameInput = document.getElementById("playlist-name");
+    const playlistDialogCopy = document.getElementById("playlist-dialog-copy");
+    const createPlaylistForm = document.getElementById("create-playlist-form");
     const audioPlayer = document.getElementById("audio-player");
     const playerTrackTitle = document.getElementById("player-track-title");
     const playerTrackByline = document.getElementById("player-track-byline");
@@ -1602,6 +1476,7 @@
     let selectedFilmId = null;
     let returnFocusId = null;
     let returnFocusNode = null;
+    let playlistDialogOpener = null;
 
     function normalize(value) {
       return String(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
@@ -1651,7 +1526,11 @@
           added: Math.max(...audioAlbums.filter((album) => album.artistId === artist.id).map((album) => album.added))
         }));
       } else if (view === "tracks") {
-        records = audioTracks.filter((track) => {
+        const sourceTracks = options.playlistId
+          ? ((options.playlists || []).find((item) => item.id === options.playlistId)?.trackIds || [])
+              .map((id) => audioTracks.find((track) => track.id === id)).filter(Boolean)
+          : audioTracks;
+        records = sourceTracks.filter((track) => {
           if (genre !== "all" && track.genre !== genre) return false;
           if (options.albumId && track.albumId !== options.albumId) return false;
           if (options.artistId && track.artistId !== options.artistId) return false;
@@ -1669,7 +1548,22 @@
           const genreTracks = audioTracks.filter((track) => track.genre === name);
           const haystack = [name, ...genreAlbums.flatMap((album) => [album.title, album.artist, album.year]), ...genreTracks.map((track) => track.title)].join(" ");
           return !query || normalize(haystack).includes(query);
-        }).map((name) => ({ name, added: Math.max(...audioAlbums.filter((album) => album.genre === name).map((album) => album.added)) }));
+        }).map((name) => {
+          const album = audioAlbums.find((item) => item.genre === name);
+          return {
+            name,
+            cover: album?.cover,
+            alt: album ? `Sample artwork representing ${name}, adapted from ${album.title}.` : `Sample artwork representing ${name}.`,
+            added: Math.max(...audioAlbums.filter((item) => item.genre === name).map((item) => item.added))
+          };
+        });
+      } else if (view === "playlists") {
+        records = (options.playlists || []).filter((playlist) => {
+          const playlistTracks = playlist.trackIds.map((id) => audioTracks.find((track) => track.id === id)).filter(Boolean);
+          if (genre !== "all" && !playlistTracks.some((track) => track.genre === genre)) return false;
+          const haystack = [playlist.name, ...playlistTracks.map((track) => `${track.title} ${track.artist} ${track.genre}`)].join(" ");
+          return !query || normalize(haystack).includes(query);
+        }).map((playlist) => ({ ...playlist, added: playlist.added || 0, count: playlist.trackIds.length }));
       }
 
       const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -1680,6 +1574,7 @@
         title: (a, b) => collator.compare(titleOf(a), titleOf(b)),
         artist: (a, b) => collator.compare(artistOf(a), artistOf(b)) || collator.compare(titleOf(a), titleOf(b))
       };
+      if (view === "tracks" && options.playlistId) return records;
       if (view === "tracks" && options.albumId && options.sort === "recent") {
         const album = audioAlbums.find((item) => item.id === options.albumId);
         if (album) return records.sort((a, b) => album.trackIds.indexOf(a.id) - album.trackIds.indexOf(b.id));
@@ -1690,6 +1585,70 @@
     function queueStepIndex(index, delta, length) {
       const nextIndex = index + delta;
       return nextIndex >= 0 && nextIndex < length ? nextIndex : index;
+    }
+
+    function setDisplayedTrackSelection(displayedTracks, selectedIds, checked) {
+      displayedTracks.forEach((track) => {
+        if (checked) selectedIds.add(track.id);
+        else selectedIds.delete(track.id);
+      });
+      return selectedTracksInDisplayOrder(displayedTracks, selectedIds);
+    }
+
+    function selectedTracksInDisplayOrder(displayedTracks, selectedIds) {
+      return displayedTracks.filter((track) => selectedIds.has(track.id)).map((track) => track.id);
+    }
+
+    function applyPlayerQueue(player, trackIds, trackId, shouldPlay, sourcePlaylistId = null) {
+      const index = trackIds.indexOf(trackId);
+      if (index < 0) return false;
+      player.queueIds = trackIds.slice();
+      player.queueIndex = index;
+      player.isPlaying = Boolean(shouldPlay);
+      player.queuePlaylistId = sourcePlaylistId;
+      return true;
+    }
+
+    function secureRandomIndex(limit) {
+      const range = 0x1_0000_0000;
+      if (!Number.isInteger(limit) || limit < 1 || limit > range || !window.crypto?.getRandomValues) {
+        throw new Error("Random ordering is unavailable in this browser.");
+      }
+      const ceiling = Math.floor(range / limit) * limit;
+      const sample = new Uint32Array(1);
+      do {
+        window.crypto.getRandomValues(sample);
+      } while (sample[0] >= ceiling);
+      return sample[0] % limit;
+    }
+
+    function shuffledTrackOrder(trackIds, randomIndex = secureRandomIndex) {
+      const shuffled = trackIds.slice();
+      for (let index = shuffled.length - 1; index > 0; index -= 1) {
+        const otherIndex = randomIndex(index + 1);
+        if (!Number.isInteger(otherIndex) || otherIndex < 0 || otherIndex > index) {
+          throw new RangeError("Random index must be within the shuffle range.");
+        }
+        [shuffled[index], shuffled[otherIndex]] = [shuffled[otherIndex], shuffled[index]];
+      }
+      return shuffled;
+    }
+
+    function shufflePlaylistTrackOrder(playlist, randomIndex = secureRandomIndex, player = null) {
+      if (!playlist || playlist.trackIds.length < 2) return false;
+      const originalOrder = playlist.trackIds.slice();
+      const queueMatchesPlaylist = player?.queuePlaylistId === playlist.id
+        && player.queueIds.length === originalOrder.length
+        && originalOrder.every((trackId, index) => player.queueIds[index] === trackId);
+      const currentTrackId = queueMatchesPlaylist && player.queueIndex >= 0
+        ? player.queueIds[player.queueIndex]
+        : undefined;
+      playlist.trackIds = shuffledTrackOrder(originalOrder, randomIndex);
+      if (queueMatchesPlaylist) {
+        player.queueIds = playlist.trackIds.slice();
+        if (currentTrackId !== undefined) player.queueIndex = player.queueIds.indexOf(currentTrackId);
+      }
+      return true;
     }
 
     function initialLibraryMode(hash) {
@@ -1811,12 +1770,16 @@
       const albumCount = audioAlbums.filter((album) => album.genre === genre.name).length;
       const trackCount = audioTracks.filter((track) => track.genre === genre.name).length;
       const article = makeElement("article", "genre-card");
-      const copy = makeElement("div", "");
-      copy.append(makeElement("h3", "", genre.name));
-      copy.append(makeElement("p", "", `${albumCount} sample album${albumCount === 1 ? "" : "s"} · ${trackCount} track${trackCount === 1 ? "" : "s"}`));
-      const browseButton = makeElement("button", "", "Browse albums");
-      browseButton.type = "button";
-      browseButton.addEventListener("click", () => {
+      const openButton = makeElement("button", "genre-art-button");
+      openButton.type = "button";
+      openButton.setAttribute("aria-label", `Browse albums in ${genre.name}`);
+      const image = makeElement("img");
+      image.src = genre.cover;
+      image.alt = genre.alt;
+      image.loading = "lazy";
+      image.decoding = "async";
+      openButton.append(image, makeElement("span", "genre-art-label", "Sample genre"));
+      const browse = () => {
         state.musicGenre = genre.name;
         musicGenreSelect.value = genre.name;
         state.musicView = "albums";
@@ -1825,30 +1788,242 @@
         updateMusicTabs();
         renderMusic();
         musicResultsHeading.focus({ preventScroll: true });
-      });
-      article.append(copy, browseButton);
+      };
+      openButton.addEventListener("click", browse);
+      article.append(openButton);
+      const copy = makeElement("div", "");
+      copy.append(makeElement("h3", "", genre.name));
+      copy.append(makeElement("p", "", `${albumCount} sample album${albumCount === 1 ? "" : "s"} · ${trackCount} track${trackCount === 1 ? "" : "s"}`));
+      const browseButton = makeElement("button", "genre-browse", "Browse albums");
+      browseButton.type = "button";
+      browseButton.addEventListener("click", browse);
+      const meta = makeElement("div", "audio-card-meta");
+      meta.append(copy, browseButton);
+      article.append(meta);
       return article;
     }
 
-    function makeAudioTrackRow(track) {
+    function makePlaylistCard(playlist) {
+      const firstTrack = audioTracks.find((track) => track.id === playlist.trackIds[0]);
+      const album = firstTrack && audioAlbums.find((item) => item.id === firstTrack.albumId);
+      const article = makeElement("article", "album-card");
+      const openButton = makeElement("button", "album-art-button");
+      openButton.type = "button";
+      openButton.setAttribute("aria-label", `Open playlist ${playlist.name}, ${playlist.trackIds.length} tracks`);
+      const image = makeElement("img");
+      image.src = album?.cover || "../assets/forest.jpg";
+      image.alt = album ? `Cover artwork from ${album.title}, first in ${playlist.name}.` : `Sample playlist artwork for ${playlist.name}.`;
+      image.loading = "lazy";
+      image.decoding = "async";
+      openButton.append(image, makeElement("span", "album-art-label", "Your playlist"));
+      openButton.addEventListener("click", () => openPlaylist(playlist.id));
+      article.append(openButton);
+      const meta = makeElement("div", "audio-card-meta");
+      const title = makeElement("button", "audio-card-title", playlist.name);
+      title.type = "button";
+      title.addEventListener("click", () => openPlaylist(playlist.id));
+      meta.append(title, makeElement("p", "audio-card-submeta", `${playlist.trackIds.length} track${playlist.trackIds.length === 1 ? "" : "s"}`));
+      meta.append(makeElement("p", "audio-card-detail", "Preview session playlist"));
+      article.append(meta);
+      return article;
+    }
+
+    function makeAudioTrackRow(track, displayedTracks) {
       const album = audioAlbums.find((item) => item.id === track.albumId);
       const article = makeElement("li", "audio-track-row");
       article.dataset.trackRow = track.id;
+      article.setAttribute("aria-current", String(currentTrack()?.id === track.id));
+      const selectionLabel = makeElement("label", "track-checkbox");
+      const selectionInput = makeElement("input");
+      selectionInput.type = "checkbox";
+      selectionInput.dataset.trackCheckbox = track.id;
+      selectionInput.checked = state.selectedTrackIds.has(track.id);
+      selectionInput.setAttribute("aria-label", `Select ${track.title} by ${track.artist}`);
+      selectionInput.addEventListener("change", () => {
+        if (selectionInput.checked) state.selectedTrackIds.add(track.id);
+        else state.selectedTrackIds.delete(track.id);
+        updateTrackSelectionControls(displayedTracks);
+      });
+      selectionLabel.append(selectionInput);
+      const artworkButton = makeElement("button", "track-art-button");
+      artworkButton.type = "button";
+      artworkButton.setAttribute("aria-label", `Start ${track.title} preview by ${track.artist}`);
+      const image = makeElement("img");
+      image.src = album.cover;
+      image.alt = `${album.title} cover artwork`;
+      image.loading = "lazy";
+      image.decoding = "async";
+      artworkButton.append(image);
+      artworkButton.addEventListener("click", () => selectAudioTrack(track.id, displayedTracks));
       const copy = makeElement("div", "track-main");
-      copy.append(makeElement("h3", "track-title", track.title));
+      const titleHeading = makeElement("h3", "track-title");
+      const titleButton = makeElement("button", "track-title-button", track.title);
+      titleButton.type = "button";
+      titleButton.setAttribute("aria-label", `Start ${track.title} preview by ${track.artist}`);
+      titleButton.addEventListener("click", () => selectAudioTrack(track.id, displayedTracks));
+      titleHeading.append(titleButton);
+      copy.append(titleHeading);
       copy.append(makeElement("p", "track-byline", `${track.artist} · ${album.title}`));
       const actions = makeElement("div", "track-actions");
       actions.append(makeElement("span", "track-duration", track.duration));
-      const selectButton = makeElement("button", "track-select", "Select");
-      selectButton.type = "button";
-      selectButton.dataset.selectTrack = track.id;
-      selectButton.setAttribute("aria-label", `Select ${track.title} by ${track.artist} for preview`);
-      selectButton.setAttribute("aria-pressed", String(currentTrack()?.id === track.id));
-      if (currentTrack()?.id === track.id) selectButton.textContent = "Selected";
-      selectButton.addEventListener("click", () => selectAudioTrack(track.id));
-      actions.append(selectButton);
-      article.append(copy, makeElement("p", "track-genre", track.genre), actions);
+      article.append(selectionLabel, artworkButton, copy, makeElement("p", "track-genre", track.genre), actions);
       return article;
+    }
+
+    function makeTrackListControls(displayedTracks) {
+      const controls = makeElement("div", "track-list-controls");
+      const selectionActions = makeElement("div", "track-selection-actions");
+      const selectLabel = makeElement("label", "select-all-tracks");
+      const selectAll = makeElement("input");
+      selectAll.type = "checkbox";
+      selectAll.dataset.selectAllTracks = "true";
+      selectAll.setAttribute("aria-label", "Select all displayed tracks");
+      selectAll.addEventListener("change", () => {
+        setDisplayedTrackSelection(displayedTracks, state.selectedTrackIds, selectAll.checked);
+        updateTrackSelectionControls(displayedTracks);
+      });
+      selectLabel.append(selectAll, document.createTextNode("Select all displayed"));
+      const playSelected = makeElement("button", "play-selected", "Play selected (0)");
+      playSelected.type = "button";
+      playSelected.dataset.playSelected = "true";
+      playSelected.disabled = true;
+      playSelected.addEventListener("click", () => playSelectedTracks(displayedTracks));
+      selectionActions.append(selectLabel, playSelected);
+      const playlistActions = makeElement("div", "playlist-actions");
+      const playlistSelect = makeElement("select", "playlist-select");
+      playlistSelect.dataset.playlistTarget = "true";
+      playlistSelect.setAttribute("aria-label", "Choose a playlist");
+      const emptyOption = makeElement("option", "", "Choose playlist…");
+      emptyOption.value = "";
+      playlistSelect.append(emptyOption);
+      state.playlists.forEach((playlist) => {
+        const option = makeElement("option", "", playlist.name);
+        option.value = playlist.id;
+        playlistSelect.append(option);
+      });
+      playlistSelect.value = state.playlistTargetId;
+      playlistSelect.addEventListener("change", () => {
+        state.playlistTargetId = playlistSelect.value;
+        updateTrackSelectionControls(displayedTracks);
+      });
+      const addToPlaylist = makeElement("button", "playlist-action", "Add to playlist");
+      addToPlaylist.type = "button";
+      addToPlaylist.dataset.addToPlaylist = "true";
+      addToPlaylist.disabled = true;
+      addToPlaylist.addEventListener("click", () => addSelectedTracksToPlaylist(state.playlistTargetId, displayedTracks));
+      const createPlaylist = makeElement("button", "playlist-action", "Create playlist");
+      createPlaylist.type = "button";
+      createPlaylist.dataset.createPlaylist = "true";
+      createPlaylist.disabled = true;
+      createPlaylist.addEventListener("click", () => openCreatePlaylistDialog(displayedTracks, createPlaylist));
+      playlistActions.append(playlistSelect, addToPlaylist, createPlaylist);
+      const feedback = makeElement("p", "playlist-feedback", state.playlistNotice);
+      feedback.dataset.playlistFeedback = "true";
+      feedback.setAttribute("role", "status");
+      feedback.setAttribute("aria-live", "polite");
+      controls.append(selectionActions, playlistActions, feedback);
+      return controls;
+    }
+
+    function updateTrackSelectionControls(displayedTracks) {
+      const selectedCount = selectedTracksInDisplayOrder(displayedTracks, state.selectedTrackIds).length;
+      musicResults.querySelectorAll("[data-track-checkbox]").forEach((checkbox) => {
+        checkbox.checked = state.selectedTrackIds.has(checkbox.dataset.trackCheckbox);
+      });
+      const selectAll = musicResults.querySelector("[data-select-all-tracks]");
+      if (selectAll) {
+        selectAll.checked = displayedTracks.length > 0 && selectedCount === displayedTracks.length;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < displayedTracks.length;
+      }
+      const playSelected = musicResults.querySelector("[data-play-selected]");
+      const playlistSelect = musicResults.querySelector("[data-playlist-target]");
+      const addToPlaylist = musicResults.querySelector("[data-add-to-playlist]");
+      const createPlaylist = musicResults.querySelector("[data-create-playlist]");
+      if (playSelected) {
+        playSelected.disabled = selectedCount === 0;
+        playSelected.textContent = `Play selected (${selectedCount})`;
+      }
+      if (addToPlaylist) addToPlaylist.disabled = selectedCount === 0 || !playlistSelect?.value;
+      if (createPlaylist) createPlaylist.disabled = selectedCount === 0;
+    }
+
+    function playSelectedTracks(displayedTracks) {
+      const trackIds = selectedTracksInDisplayOrder(displayedTracks, state.selectedTrackIds);
+      if (trackIds.length === 0) return false;
+      return setPlayerQueue(trackIds, trackIds[0], true, state.musicView === "tracks" ? state.selectedPlaylistId : null);
+    }
+
+    function createPlaylist(name, trackIds) {
+      const playlist = makePlaylistRecord(
+        `playlist-${state.nextPlaylistNumber}`,
+        name,
+        trackIds,
+        audioTracks,
+        state.playlists.length + 1
+      );
+      if (!playlist) return null;
+      state.nextPlaylistNumber += 1;
+      state.playlists.push(playlist);
+      return playlist;
+    }
+
+    function makePlaylistRecord(id, name, trackIds, availableTracks, added) {
+      const cleanName = name.trim();
+      const validTrackIds = trackIds.filter((trackId) => availableTracks.some((track) => track.id === trackId));
+      return cleanName && validTrackIds.length > 0 ? { id, name: cleanName, trackIds: [...validTrackIds], added } : null;
+    }
+
+    function appendTracksToPlaylist(playlist, trackIds) {
+      if (!playlist || trackIds.length === 0) return 0;
+      const existing = new Set(playlist.trackIds);
+      const added = trackIds.filter((trackId) => {
+        if (existing.has(trackId)) return false;
+        existing.add(trackId);
+        return true;
+      });
+      playlist.trackIds.push(...added);
+      return added.length;
+    }
+
+    function addSelectedTracksToPlaylist(playlistId, displayedTracks) {
+      const playlist = state.playlists.find((item) => item.id === playlistId);
+      const trackIds = selectedTracksInDisplayOrder(displayedTracks, state.selectedTrackIds);
+      if (!playlist || trackIds.length === 0) return false;
+      const added = appendTracksToPlaylist(playlist, trackIds);
+      state.playlistNotice = added
+        ? `Added ${added} track${added === 1 ? "" : "s"} to ${playlist.name}.`
+        : `All selected tracks are already in ${playlist.name}.`;
+      renderMusic();
+      musicResults.querySelector("[data-add-to-playlist]")?.focus({ preventScroll: true });
+      return true;
+    }
+
+    function openCreatePlaylistDialog(displayedTracks, opener) {
+      state.pendingPlaylistTrackIds = selectedTracksInDisplayOrder(displayedTracks, state.selectedTrackIds);
+      if (state.pendingPlaylistTrackIds.length === 0) return false;
+      playlistDialogOpener = opener;
+      playlistNameInput.value = "";
+      playlistNameInput.setCustomValidity("");
+      playlistDialogCopy.textContent = `${state.pendingPlaylistTrackIds.length} selected track${state.pendingPlaylistTrackIds.length === 1 ? "" : "s"} will be added in displayed order. This preview playlist is temporary.`;
+      playlistDialog.showModal();
+      playlistNameInput.focus();
+      return true;
+    }
+
+    function openPlaylist(playlistId) {
+      state.musicView = "tracks";
+      state.selectedPlaylistId = playlistId;
+      state.selectedAlbumId = null;
+      state.selectedArtistId = null;
+      state.playlistNotice = "";
+      state.playlistOrderNotice = "";
+      state.musicQuery = "";
+      state.musicGenre = "all";
+      musicSearch.value = "";
+      musicGenreSelect.value = "all";
+      updateMusicTabs();
+      renderMusic();
+      musicResultsHeading.focus({ preventScroll: true });
     }
 
     function updateViewControls() {
@@ -1907,27 +2082,40 @@
 
     function renderMusic() {
       updateMusicTabs();
+      shufflePlaylistButton.hidden = true;
+      shufflePlaylistButton.disabled = true;
+      playlistOrderStatus.textContent = "";
       const options = {
         query: state.musicQuery,
         genre: state.musicGenre,
         sort: state.musicSort,
         albumId: state.musicView === "tracks" ? state.selectedAlbumId : null,
-        artistId: state.musicView === "tracks" ? state.selectedArtistId : null
+        artistId: state.musicView === "tracks" ? state.selectedArtistId : null,
+        playlistId: state.musicView === "tracks" ? state.selectedPlaylistId : null,
+        playlists: state.playlists
       };
       const records = visibleAudioRecords(state.musicView, options);
-      const headings = { albums: "Albums", artists: "Artists", tracks: "Tracks", genres: "Genres" };
+      const headings = { albums: "Albums", artists: "Artists", tracks: "Tracks", genres: "Genres", playlists: "Playlists" };
       let heading = headings[state.musicView] || "Albums";
       let noun = state.musicView;
 
-      if (state.musicView === "tracks" && state.selectedAlbumId) {
+      if (state.musicView === "tracks" && state.selectedPlaylistId) {
+        const playlist = state.playlists.find((item) => item.id === state.selectedPlaylistId);
+        heading = `Tracks · ${playlist.name}`;
+        musicContextText.textContent = `${playlist.trackIds.length} tracks · Your playlist in this preview session.`;
+        playlistOrderStatus.textContent = state.playlistOrderNotice;
+        shufflePlaylistButton.hidden = false;
+        shufflePlaylistButton.disabled = playlist.trackIds.length < 2;
+        musicContext.hidden = false;
+      } else if (state.musicView === "tracks" && state.selectedAlbumId) {
         const album = audioAlbums.find((item) => item.id === state.selectedAlbumId);
         heading = `Tracks · ${album.title}`;
-        musicContextText.textContent = `Sample album by ${album.artist}. Choose a track to set the preview queue.`;
+        musicContextText.textContent = `Sample album by ${album.artist}. Choose a title to start its simulated preview, or select tracks for a queue.`;
         musicContext.hidden = false;
       } else if (state.musicView === "tracks" && state.selectedArtistId) {
         const artist = audioArtists.find((item) => item.id === state.selectedArtistId);
         heading = `Tracks · ${artist.name}`;
-        musicContextText.textContent = `Sample tracks by ${artist.name}. Choose a track to set the preview queue.`;
+        musicContextText.textContent = `Sample tracks by ${artist.name}. Choose a title to start its simulated preview, or select tracks for a queue.`;
         musicContext.hidden = false;
       } else {
         musicContext.hidden = true;
@@ -1937,10 +2125,17 @@
       if (state.musicView === "artists") noun = "artist";
       if (state.musicView === "tracks") noun = "track";
       if (state.musicView === "genres") noun = "genre";
+      if (state.musicView === "playlists") noun = "playlist";
       musicResultsHeading.textContent = heading;
       musicResultsStatus.textContent = `${records.length} ${noun}${records.length === 1 ? "" : "s"}`;
       musicResults.hidden = false;
       musicEmptyState.hidden = records.length !== 0;
+      const noPlaylists = state.musicView === "playlists" && state.playlists.length === 0;
+      musicEmptyTitle.textContent = noPlaylists ? "No playlists yet" : "No music found";
+      musicEmptyCopy.textContent = noPlaylists
+        ? "Select songs in Tracks, then create a playlist. Preview playlists last only for this session."
+        : "Try a different search or genre, or clear the current filters.";
+      document.getElementById("clear-music-filters").hidden = noPlaylists;
       musicResults.replaceChildren();
       if (records.length === 0) return;
 
@@ -1954,8 +2149,13 @@
         musicResults.append(grid);
       } else if (state.musicView === "tracks") {
         const list = makeElement("ol", "audio-track-list");
-        records.forEach((track) => list.append(makeAudioTrackRow(track)));
-        musicResults.append(list);
+        records.forEach((track) => list.append(makeAudioTrackRow(track, records)));
+        musicResults.append(makeTrackListControls(records), list);
+        updateTrackSelectionControls(records);
+      } else if (state.musicView === "playlists") {
+        const grid = makeElement("div", "playlist-grid");
+        records.forEach((playlist) => grid.append(makePlaylistCard(playlist)));
+        musicResults.append(grid);
       } else {
         const grid = makeElement("div", "genre-grid");
         records.forEach((genre) => grid.append(makeGenreCard(genre)));
@@ -1967,6 +2167,7 @@
       state.musicView = "tracks";
       state.selectedAlbumId = albumId;
       state.selectedArtistId = null;
+      state.selectedPlaylistId = null;
       updateMusicTabs();
       renderMusic();
       musicResultsHeading.focus({ preventScroll: true });
@@ -1976,6 +2177,7 @@
       state.musicView = "tracks";
       state.selectedAlbumId = null;
       state.selectedArtistId = artistId;
+      state.selectedPlaylistId = null;
       updateMusicTabs();
       renderMusic();
       musicResultsHeading.focus({ preventScroll: true });
@@ -2028,36 +2230,22 @@
       togglePreviewButton.textContent = state.player.isPlaying ? "Pause preview" : "Play preview";
       previousTrackButton.disabled = state.player.queueIndex <= 0;
       nextTrackButton.disabled = state.player.queueIndex >= state.player.queueIds.length - 1;
-      document.querySelectorAll("[data-select-track]").forEach((button) => {
-        const isCurrent = button.dataset.selectTrack === track.id;
-        button.setAttribute("aria-pressed", String(isCurrent));
-        button.textContent = isCurrent ? "Selected" : "Select";
-        const row = button.closest("[data-track-row]");
-        if (row) row.setAttribute("aria-current", String(isCurrent));
+      musicResults.querySelectorAll("[data-track-row]").forEach((row) => {
+        row.setAttribute("aria-current", String(row.dataset.trackRow === track.id));
       });
       updateQueueSelection();
     }
 
-    function setPlayerQueue(trackIds, trackId) {
+    function setPlayerQueue(trackIds, trackId, shouldPlay = false, sourcePlaylistId = null) {
       const validIds = trackIds.filter((id) => audioTracks.some((track) => track.id === id));
-      const index = validIds.indexOf(trackId);
-      if (index < 0) return;
-      state.player.queueIds = validIds;
-      state.player.queueIndex = index;
-      state.player.isPlaying = false;
+      if (!applyPlayerQueue(state.player, validIds, trackId, shouldPlay, sourcePlaylistId)) return false;
       renderQueue();
       updatePlayer();
+      return true;
     }
 
-    function selectAudioTrack(trackId) {
-      const tracks = visibleAudioRecords("tracks", {
-        query: state.musicQuery,
-        genre: state.musicGenre,
-        sort: state.musicSort,
-        albumId: state.selectedAlbumId,
-        artistId: state.selectedArtistId
-      });
-      setPlayerQueue(tracks.map((track) => track.id), trackId);
+    function selectAudioTrack(trackId, displayedTracks) {
+      return setPlayerQueue(displayedTracks.map((track) => track.id), trackId, true, state.musicView === "tracks" ? state.selectedPlaylistId : null);
     }
 
     function selectQueueIndex(index, player = state.player) {
@@ -2126,6 +2314,8 @@
         state.musicView = tab.dataset.musicView;
         state.selectedAlbumId = null;
         state.selectedArtistId = null;
+        state.selectedPlaylistId = null;
+        state.playlistNotice = "";
         updateMusicTabs();
         renderMusic();
       });
@@ -2164,6 +2354,7 @@
       state.musicGenre = "all";
       state.selectedAlbumId = null;
       state.selectedArtistId = null;
+      state.selectedPlaylistId = null;
       musicSearch.value = "";
       musicGenreSelect.value = "all";
       renderMusic();
@@ -2173,8 +2364,29 @@
     document.getElementById("clear-music-context").addEventListener("click", () => {
       state.selectedAlbumId = null;
       state.selectedArtistId = null;
+      state.selectedPlaylistId = null;
+      state.playlistNotice = "";
+      state.playlistOrderNotice = "";
       renderMusic();
       musicResultsHeading.focus({ preventScroll: true });
+    });
+
+    shufflePlaylistButton.addEventListener("click", () => {
+      const playlist = state.playlists.find((item) => item.id === state.selectedPlaylistId);
+      if (!playlist) return;
+      try {
+        if (!shufflePlaylistTrackOrder(playlist, secureRandomIndex, state.player)) return;
+        state.playlistOrderNotice = `Order shuffled for ${playlist.name}. This preview playlist is temporary.`;
+        renderMusic();
+        renderQueue();
+        updatePlayer();
+      } catch (error) {
+        state.playlistOrderNotice = error instanceof Error
+          ? error.message
+          : "Could not shuffle this playlist order.";
+        renderMusic();
+      }
+      shufflePlaylistButton.focus({ preventScroll: true });
     });
 
     document.querySelectorAll("[data-view]").forEach((button) => {
@@ -2215,9 +2427,8 @@
     document.getElementById("dialog-close").addEventListener("click", () => dialog.close());
     dialog.addEventListener("close", () => {
       const matchingCard = returnFocusId && filmGrid.querySelector(`[data-open-id="${returnFocusId}"]`);
-      const mobileAllFilms = document.querySelector(".mobile-nav [data-view='all']");
-      const desktopAllFilms = document.querySelector(".sidebar .local-view[data-view='all']");
-      const focusTarget = [returnFocusNode, matchingCard, searchInput, mobileAllFilms, desktopAllFilms]
+      const allFilmsView = document.querySelector(".collection-switch [data-view='all']");
+      const focusTarget = [returnFocusNode, matchingCard, searchInput, allFilmsView]
         .find(canReceiveFocus);
       focusTarget?.focus({ preventScroll: true });
       selectedFilmId = null;
@@ -2234,6 +2445,30 @@
 
     document.getElementById("play-film").addEventListener("click", () => {
       dialogFeedback.hidden = false;
+    });
+
+    document.getElementById("cancel-playlist").addEventListener("click", () => playlistDialog.close());
+    playlistNameInput.addEventListener("input", () => playlistNameInput.setCustomValidity(""));
+    createPlaylistForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const playlist = createPlaylist(playlistNameInput.value, state.pendingPlaylistTrackIds);
+      if (!playlist) {
+        playlistNameInput.setCustomValidity("Enter a name and select at least one track.");
+        playlistNameInput.reportValidity();
+        return;
+      }
+      state.playlistTargetId = playlist.id;
+      state.playlistNotice = `Created ${playlist.name} with ${playlist.trackIds.length} selected track${playlist.trackIds.length === 1 ? "" : "s"}.`;
+      state.selectedPlaylistId = null;
+      state.musicView = "playlists";
+      playlistDialog.close();
+      renderMusic();
+      musicResultsHeading.focus({ preventScroll: true });
+    });
+    playlistDialog.addEventListener("close", () => {
+      state.pendingPlaylistTrackIds = [];
+      playlistDialogOpener?.focus({ preventScroll: true });
+      playlistDialogOpener = null;
     });
 
     previousTrackButton.addEventListener("click", () => moveQueue(-1));
@@ -2274,6 +2509,62 @@
       assert(visibleAudioRecords("tracks", { ...audioBase, albumId: "album-first-light" }).map((track) => track.id).join(",") === "track-first-light", "album selection opens its tracks");
       assert(visibleAudioRecords("tracks", { ...audioBase, query: "Last Light" }).some((track) => track.id === "track-last-light"), "track search includes album metadata");
       assert(visibleAudioRecords("genres", audioBase).length === 6, "genre view lists sample genres");
+      assert(audioTracks.every((track) => audioAlbums.some((album) => album.id === track.albumId && album.cover)), "every sample track has matching album cover art");
+      assert(audioArtists.every((artist) => audioAlbums.some((album) => album.artistId === artist.id && album.cover)), "every sample artist has associated artwork");
+      assert(visibleAudioRecords("genres", audioBase).every((genre) => genre.cover && genre.alt), "every sample genre has accessible poster artwork");
+      const newPlaylist = makePlaylistRecord("playlist-test", "  Evening drive  ", ["track-last-light", "track-first-light"], audioTracks, 1);
+      assert(newPlaylist.name === "Evening drive" && newPlaylist.trackIds.join(",") === "track-last-light,track-first-light", "new playlists trim the name and keep selected display order");
+      assert(makePlaylistRecord("playlist-empty", "   ", ["missing-track"], audioTracks, 2) === null, "empty names and unknown tracks cannot create a playlist");
+      const playlistAppend = { trackIds: ["track-open-road"] };
+      assert(appendTracksToPlaylist(playlistAppend, ["track-last-light", "track-first-light"]) === 2 && playlistAppend.trackIds.join(",") === "track-open-road,track-last-light,track-first-light", "bulk playlist adds append every selected track in order");
+      assert(appendTracksToPlaylist(playlistAppend, ["track-first-light", "track-open-road"]) === 0 && playlistAppend.trackIds.length === 3, "adding tracks already present does not create ambiguous duplicate rows");
+      assert(appendTracksToPlaylist(playlistAppend, []) === 0 && playlistAppend.trackIds.length === 3, "an empty selection cannot change a playlist");
+      assert(visibleAudioRecords("playlists", { ...audioBase, playlists: [newPlaylist] })[0]?.id === "playlist-test", "the Playlists section lists created playlists");
+      assert(visibleAudioRecords("tracks", { ...audioBase, playlists: [newPlaylist], playlistId: "playlist-test" }).map((track) => track.id).join(",") === "track-last-light,track-first-light", "opening a playlist preserves its track order");
+      const shufflePlaylist = {
+        id: "playlist-shuffle-test",
+        name: "Shuffle test",
+        trackIds: ["track-first-light", "track-open-road", "track-last-light"]
+      };
+      const originalShuffleOrder = shufflePlaylist.trackIds.slice();
+      const shufflePlayer = { queueIds: originalShuffleOrder.slice(), queueIndex: 1, isPlaying: true, queuePlaylistId: shufflePlaylist.id };
+      const activeTrackId = shufflePlayer.queueIds[shufflePlayer.queueIndex];
+      assert(shufflePlaylistTrackOrder(shufflePlaylist, () => 0, shufflePlayer), "a playlist with multiple tracks can be shuffled");
+      assert(shufflePlaylist.trackIds.join(",") !== originalShuffleOrder.join(",")
+        && new Set(shufflePlaylist.trackIds).size === originalShuffleOrder.length
+        && originalShuffleOrder.every((trackId) => shufflePlaylist.trackIds.includes(trackId)), "shuffle changes stored order while retaining every track exactly once");
+      assert(shufflePlayer.queueIds.join(",") === shufflePlaylist.trackIds.join(",")
+        && shufflePlayer.queueIds[shufflePlayer.queueIndex] === activeTrackId
+        && shufflePlayer.isPlaying, "shuffling a matching active queue preserves its current track and play state");
+      const unrelatedPlaylist = { id: "playlist-same-tracks", trackIds: originalShuffleOrder.slice() };
+      const unrelatedQueue = { queueIds: originalShuffleOrder.slice(), queueIndex: 1, isPlaying: true, queuePlaylistId: shufflePlaylist.id };
+      assert(shufflePlaylistTrackOrder(unrelatedPlaylist, () => 0, unrelatedQueue)
+        && unrelatedQueue.queueIds.join(",") === originalShuffleOrder.join(",")
+        && unrelatedQueue.queuePlaylistId === shufflePlaylist.id
+        && unrelatedQueue.queueIndex === 1, "shuffling an equal-content playlist leaves another playlist's active queue untouched");
+      const shuffledPlaylistTracks = visibleAudioRecords("tracks", {
+        ...audioBase,
+        playlists: [shufflePlaylist],
+        playlistId: shufflePlaylist.id
+      });
+      assert(shuffledPlaylistTracks.map((track) => track.id).join(",") === shufflePlaylist.trackIds.join(","), "the opened playlist view immediately follows its shuffled stored order");
+      const directPlayAfterShuffle = { queueIds: [], queueIndex: -1, isPlaying: false, queuePlaylistId: null };
+      assert(applyPlayerQueue(directPlayAfterShuffle, shuffledPlaylistTracks.map((track) => track.id), "track-open-road", true)
+        && directPlayAfterShuffle.queueIds[directPlayAfterShuffle.queueIndex] === "track-open-road", "a shuffled row still starts its own track identity");
+      const displayedTracks = [{ id: "track-last-light" }, { id: "track-first-light" }, { id: "track-open-road" }];
+      const selectedTrackIds = new Set(["track-open-road", "track-last-light"]);
+      assert(selectedTracksInDisplayOrder(displayedTracks, selectedTrackIds).join(",") === "track-last-light,track-open-road", "selected tracks follow the displayed list order");
+      const allSelected = new Set(["track-hidden"]);
+      setDisplayedTrackSelection(displayedTracks.slice(0, 2), allSelected, true);
+      assert(allSelected.has("track-hidden") && allSelected.has("track-last-light") && allSelected.has("track-first-light"), "Select all adds currently displayed tracks while retaining hidden selections");
+      setDisplayedTrackSelection(displayedTracks.slice(0, 2), allSelected, false);
+      assert(allSelected.size === 1 && allSelected.has("track-hidden"), "clearing Select all only clears currently displayed tracks");
+      const selectedQueue = { queueIds: [], queueIndex: -1, isPlaying: false };
+      const selectedOrder = selectedTracksInDisplayOrder(displayedTracks, selectedTrackIds);
+      assert(applyPlayerQueue(selectedQueue, selectedOrder, selectedOrder[0], true) && selectedQueue.queueIds.join(",") === "track-last-light,track-open-road" && selectedQueue.queueIndex === 0 && selectedQueue.isPlaying, "Play selected queues checked tracks in displayed order and starts the first preview");
+      const directQueue = { queueIds: [], queueIndex: -1, isPlaying: false };
+      assert(applyPlayerQueue(directQueue, displayedTracks.map((track) => track.id), "track-first-light", true) && directQueue.queueIndex === 1 && directQueue.isPlaying && selectedTrackIds.has("track-last-light"), "direct title preview starts that song without changing checkbox selection");
+      assert(selectedTracksInDisplayOrder(displayedTracks, new Set()).length === 0, "empty selection produces no Play selected queue");
       assert(queueStepIndex(0, -1, 3) === 0 && queueStepIndex(0, 1, 3) === 1 && queueStepIndex(2, 1, 3) === 2 && queueStepIndex(1, -1, 3) === 0, "queue previous and next stay within bounds");
       const playingQueue = { queueIds: ["one", "two", "three"], queueIndex: 0, isPlaying: true };
       assert(moveQueue(1, playingQueue) && moveQueue(-1, playingQueue) && selectQueueIndex(2, playingQueue) && playingQueue.queueIndex === 2 && playingQueue.isPlaying, "queue next, previous and selection preserve active preview state");

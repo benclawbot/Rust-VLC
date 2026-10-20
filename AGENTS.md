@@ -1,6 +1,6 @@
 # Rust-VLC agent instructions
 
-Read README.md, docs/IMPLEMENTATION_PLAN.md, docs/ARCHITECTURE.md, and docs/HANDOFF.md before implementation. This repository currently contains planning and HTML design previews. The user selected Archive on 2026-10-20; design/proposals/archive.html is the visual target. Rust implementation has not started.
+Read README.md, docs/IMPLEMENTATION_PLAN.md, docs/ARCHITECTURE.md, and docs/HANDOFF.md before implementation. This repository contains a Rust desktop audio prototype and HTML design previews. The user selected Archive on 2026-10-20; design/proposals/archive.html remains the visual target for the broader UI migration.
 
 ## Roles and scope
 

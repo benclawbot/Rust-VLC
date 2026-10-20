@@ -1,6 +1,6 @@
 # Luna Max implementation hand-off
 
-The user selected **Archive** on 2026-10-20 and required audio support. Use `design/proposals/archive.html`, including Movies/Music navigation and the audio views/mini-player, and design/README.md as the visual target. The current deliverable is planning and HTML proposals; Rust implementation has not started. HTML proposals are intentionally separate from production Slint code.
+The user selected **Archive** on 2026-10-20 and required audio support. The latest visual target is `design/proposals/archive.html`: the proposal sidebar is removed, a prominent Movies/Music switch sits above the collection, and Music has artwork-led views and a Playlists section. Clicking a song starts it immediately. Each track row starts with a checkbox; Select all acts on displayed rows, Play selected queues checked displayed rows in order, and selected tracks can be added to a new or listbox-selected playlist. An opened playlist can shuffle its stored track order. The HTML controls are a sample preview; production code uses Slint.
 
 ## Required roles
 
@@ -14,9 +14,9 @@ If these exact settings are unavailable, report it. Review and implementation ar
 
 ## Dispatch order and ownership
 
-1. Finish D00; record the user's selected proposal and revision. T01 starts only after selection.
-2. Assign T01 to one Luna worker. Parent reviews foundation and commits/interfaces before dependent work.
-3. Run T02, then T03. Sol reviews FFI lifetime, rendering measurements and early platform results. Close M0 only with evidence.
+1. D00 is accepted with the current Archive revisions recorded in `design/README.md`.
+2. The first native audio slice is in the working tree. Review its code and evidence before using it as the next task's base.
+3. Run T02, then T03 on Arch. Sol reviews FFI lifetime and rendering measurements. A Windows audio smoke test does not close M0; require the Wayland and X11 rendering evidence in the plan.
 4. Parent completes T04 contract publication and assigns three non-overlapping lanes: T05 playback, T06 storage, T07 UI.
 5. Integrate reviewed lanes. Run T08 scanner, T09 queue, then T10 series. Start T11 artwork and T12 history only after their storage APIs exist.
 6. Run T13 audio and T14 playlists in separate modules while T15 tools uses exclusively assigned playback/UI components. Parent/T07 owner wires the resulting views.
@@ -75,11 +75,11 @@ failure or reason. Separate blockers from optional follow-up. If there are no
 findings, say so and list missing verification. Review only the fixed revision.
 ```
 
-## First concrete implementation assignment
+## Current native audio slice
 
-After selection, dispatch **T01 alone** using the worker template. It creates a working minimum Slint window and shared types, not a fake populated catalogue. Record source/license choices and actual platform/toolchain versions. Require clean format/check/test results and a native window smoke test. Then send that fixed revision to Sol.
+The first native slice imports local audio, shows filename-backed track rows, plays a clicked song, queues checked tracks in order, and provides Previous/Play-Pause/Next controls through one serialized libVLC owner. It also creates session-only playlists, adds checked tracks to a new or selected playlist, and shuffles a selected playlist's stored order. The Movies view is still a placeholder; there is no metadata/artwork extraction or database persistence. This slice does not complete T13/T14 or M1.
 
-T02/T03 must remain a small executable playback slice. Do not start posters, scanner, playlists or production title-card polish while the render path is unproven. The HTML previews already provide the visual target; they do not prove native performance.
+Keep T02/T03 as a small executable playback slice. Do not expand into video posters, library scanning, persistent playlists or production title-card polish while the render path is unproven. The HTML preview defines the requested composition; it does not prove native performance.
 
 ## Integration and completion
 

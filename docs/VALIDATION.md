@@ -1,6 +1,10 @@
 # Validation and release gates
 
-Current baseline contains documents and HTML previews. No Rust, libVLC playback, Arch installation, macOS package or Windows package has been validated yet. Future commands below become runnable after T01; they are not current test results.
+Current baseline (2026-10-20) contains the Archive HTML preview and an initial Rust/Slint Windows audio slice. Formatting, Clippy, all-target checking and unit tests pass using the installed stable toolchain through a per-process `RUSTUP_TOOLCHAIN` override; the repository's pinned toolchain file was not changed. The default suite reports 14 passed and one ignored libVLC runtime regression; that regression also passes when run explicitly with the installed libVLC 3 runtime. These checks do not close an Arch, macOS or Windows release gate.
+
+The HTML preview was manually checked for playlist creation from selected tracks, choosing an existing playlist, adding multiple checked tracks in displayed order, shuffling an opened playlist's stored order, clicking a shuffled song to start its matching preview, and rejecting a duplicate add while keeping keyboard focus on the Add button. Shuffling an equal-content playlist leaves the unrelated active queue intact; shuffling its owning playlist updates the queue while preserving the current song. At 1887×1096, the page has no horizontal overflow, every visible image loaded, and the browser reported no warnings or errors. Playback in this preview is simulated and produces no audio.
+
+The native window could not be visually inspected in this session, and audible speaker output was not checked. Linux Wayland/X11 video rendering, native macOS/Windows release packages, actual media-library scanning, metadata/artwork extraction and playlist persistence remain unverified or unimplemented.
 
 ## HTML proposals (D00)
 
@@ -10,14 +14,18 @@ Each proposal exposes `window.previewSelfCheck()` for a small assert-based data/
 
 Archive's selected music extension also requires Movies/Music switching, artist/album/track/genre navigation, album track selection, queue display, previous/next and preview play/pause. Check that changing the visible library retains the selected mini-player track, square art stays square and the player does not cover the final content row. All audio feedback must remain labelled as simulated. Native audio release acceptance still requires real MP3/FLAC decoding, transport, queue advancement and playlist restart persistence.
 
-## Automated Rust checks (after T01)
+## Automated Rust checks
 
 ```sh
+$env:RUSTUP_TOOLCHAIN='stable-x86_64-pc-windows-msvc'
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-cargo build --release --locked
+cargo check --all-targets --locked
+cargo test --all-targets --locked
+cargo build --locked
 ```
+
+All five cargo commands above pass on the current Windows host. `cargo test` reports 14 passed, 0 failed and 1 ignored test; the ignored test requires installed libVLC 3 and also passes when run explicitly. A release package build has not been performed.
 
 Separate runtime/display-dependent checks with an explicit test name or feature decided in T01. Keep pure filename, queue, scan reconciliation and SQLite tests runnable without libVLC or network access. Do not introduce an architecture solely to satisfy a test harness. Dependency/security review checks belong in CI once the dependency graph exists; pin any added tooling and document its version.
 

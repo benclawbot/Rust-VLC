@@ -2,7 +2,7 @@
 
 A planned Rust desktop media player inspired by [VLC Première](https://github.com/benclawbot/VLC-Premiere), with Netflix-style access to a local movie and series library.
 
-**Current state: Archive design selected; implementation hand-off prepared. No Rust player has been implemented.**
+**Current state:** The first Rust/Slint audio slice is implemented. Windows format, build and unit checks pass, and an explicit libVLC 3 smoke test reached `Playing` with a generated WAV and reported its duration. The native window was not visually inspected, and audible speaker output was not checked. Arch rendering and macOS/Windows release packages remain open work.
 
 ## Review the HTML proposals
 
@@ -22,7 +22,7 @@ Then visit `http://127.0.0.1:8765/design/`. The previews are plain HTML, CSS, an
 
 All three retain Première's Inter typography, warm charcoal, ivory, and orange. The HTML is a design reference for Slint, not the production UI stack.
 
-The user selected **Archive** on 2026-10-20 and required audio support. Its movie catalogue, music library, sidebar and direct search/filter access are the production visual target. Music controls in this HTML are simulated; native playback is a later verified milestone.
+The user selected **Archive** on 2026-10-20 and refined it with a prominent Movies/Music switch, poster-led music views, track selection and playlists. The HTML preview uses sample media and simulated playback. The native slice imports local audio, plays through libVLC, supports checked-track queues, and creates, fills and shuffles session-only playlists. Movie browsing, metadata/artwork extraction and playlist persistence remain unimplemented.
 
 ## Implementation hand-off
 

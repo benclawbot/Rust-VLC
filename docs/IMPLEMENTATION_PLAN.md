@@ -6,16 +6,16 @@ Planning baseline: 2026-10-20. The approved targets are Arch Linux, macOS, and W
 
 | Gate | Deliverable | Current status |
 | --- | --- | --- |
-| D0 | Three HTML proposals, browser checks, user selection | Accepted: Archive Movies/Music selected, checked and reviewed |
-| M0 | Slint/libVLC feasibility with measured real playback | Not started |
-| M1 | Arch desktop player with functional transport and queue | Not started |
+| D0 | Three HTML proposals, browser checks, user selection | Accepted: Archive Movies/Music selected and revised; playlist interactions checked |
+| M0 | Slint/libVLC feasibility with measured real playback | Not started: Arch Wayland/X11 video rendering is untested |
+| M1 | Arch desktop player with functional transport and queue | In progress: Windows audio slice exists; Arch acceptance is untested |
 | M2 | Persistent movie/series library and optional artwork | Not started |
-| M3 | Music, playlists, resume, player tools, settings | Not started |
+| M3 | Music, playlists, resume, player tools, settings | In progress: local tracks and session-only playlists exist; persistence and metadata are unimplemented |
 | M4 | Tested installation/upgrade packages for all three OS families | Not started |
 
-A gate closes only with its evidence in docs/VALIDATION.md. Compilation is not playback evidence. No implementation task is complete in this planning baseline.
+A gate closes only with its evidence in docs/VALIDATION.md. The first native audio slice is implemented, but no release milestone is accepted; a Windows audio smoke test does not close Arch playback or rendering gates.
 
-The critical path is **D00 selection → T01 → T02/T03 → M0 review → T04/T05/T07 → integrated player → library/artwork → music/playlists → installed release checks**. Backend tasks can overlap after contracts are published; the rendering gate must pass before committing to the production visual composition.
+The critical path remains **D00 selection → T01 → T02/T03 → M0 review → T04/T05/T07 → integrated player → library/artwork → music/playlists → installed release checks**. The first audio shell provides a starting point; broad video/library work still depends on measured rendering evidence. Backend tasks can overlap after contracts are published.
 
 ## Task catalogue
 
@@ -50,7 +50,7 @@ Schema changes from any feature must be coordinated with T06's owner. No paralle
 
 ## D00: visual selection
 
-Deliver three HTML proposals with the same Première font/palette, different movie access patterns, functional local search/title details, and explicit sample/preview labels. The user selected Archive and required audio: extend that proposal with Movies/Music navigation, square album art, artist/album/track/genre views, album tracks, a queue and a persistent preview mini-player. Inspect desktop and narrow sizes, keyboard focus, detail-dialog dismissal, empty results, and image/font loading. Record the selected file/commit and requested adjustments in design/README.md; treat that snapshot as the target for T07. A screenshot of a preview is not a functioning player.
+Deliver three HTML proposals with the same Première font/palette, different movie access patterns, functional local search/title details, and explicit sample/preview labels. The user selected Archive and required audio: remove proposal navigation from the selected app view, put a prominent Movies/Music switch across the main top bar, and provide poster art on album, artist and genre cards plus matching cover thumbnails on track rows. Music includes artist/album/track/genre/playlist views, album tracks, bulk adding checked tracks to a new or selected playlist, a queue and a persistent preview mini-player. Inspect desktop and narrow sizes, keyboard focus, detail-dialog dismissal, empty results, playlist flows and image/font loading. Record the selected file/commit and requested adjustments in design/README.md; treat that snapshot as the target for T07. A screenshot of a preview is not a functioning player.
 
 ## M0: eliminate playback uncertainty
 
@@ -82,9 +82,9 @@ Parent publishes the actual commands/events, bounded-channel policy, storage met
 
 T05 implements explicit playback state, load/play/pause/stop, seek, volume, rate/error reporting and clean shutdown. Verify real MP4/MKV/MP3, corrupt/unsupported input, unavailable files, rapid replacement, seeking while loading and closing while decoding. Store no player pointers outside the playback owner.
 
-T07 translates the selected Archive HTML composition to Slint, including Movies/Music navigation, the library shell, title detail/series path, player surface and state/error panels. Music uses square art, artist/album/track/genre views and a mini-player that remains accessible while browsing either library. Wire audio views when T13/T14 backends land; do not leave them decorative. Use real records as soon as the backend exists; keep synthetic UI fixtures confined to tests. Preserve focus, selected item, scroll and current playback during artwork/scan updates. First-run, no runtime, empty library, missing artwork, offline root and playback error need usable actions. Check pointer and keyboard access, 100/150/200% scaling, minimum window size and dark/light/system preference.
+T07 translates the selected Archive HTML composition to Slint, including a prominent Movies/Music switch at the top of the main section (no proposal-navigation side column), the library shell, title detail/series path, player surface and state/error panels. Music uses poster art for albums, artists and genres, cover thumbnails on track rows, a Playlists section, and a mini-player that remains accessible while browsing either library. Clicking a song row starts that song immediately. Every track row begins with an accessible selection checkbox; the list-level checkbox selects or clears every row in the current list, and Play selected queues checked tracks in displayed order and starts the first. Checkbox changes alone never start playback. Selected tracks can be added in displayed order to a new playlist or a chosen existing playlist. Wire audio views when T13/T14 backends land; do not leave them decorative. Use real records as soon as the backend exists; keep synthetic UI fixtures confined to tests. Preserve focus, selected item, scroll and current playback during artwork/scan updates. First-run, no runtime, empty library, missing artwork, offline root and playback error need usable actions. Check pointer and keyboard access, 100/150/200% scaling, minimum window size and dark/light/system preference.
 
-T09 implements tested queue loading, duplicates, insert-next, append, previous/next, remove/reorder, repeat-off/one/all and shuffle history. Cover empty/single/multiple queues, terminal event deduplication, error stop behavior and manual Next under repeat-one. Playback order follows the active collection rather than the currently visible filtered shelf by accident.
+T09 implements tested queue loading, duplicates, insert-next, append, previous/next, remove/reorder, repeat-off/one/all and shuffle history. Play selected builds the queue from checked entries in the current list's displayed order; clicking one song starts it immediately. Cover empty/single/multiple queues, terminal event deduplication, error stop behavior and manual Next under repeat-one. Playback order follows the active collection rather than the currently visible filtered shelf by accident.
 
 M1 acceptance: launch, open a real local file, play/pause/seek, queue two files, Next/Previous, stop, and close on Arch. The selected title shown in the UI must match the audible/visible media. All controls report actual playback state.
 
@@ -104,9 +104,9 @@ M2 acceptance: select a fixture directory with movies and two series, scan, brow
 
 T12 persists resume/history and queue state using the thresholds and event rules in ARCHITECTURE.md. Test pause/stop/close, completion, unknown durations, a manual seek near the end, explicit history clear, and stale progress arriving after the next item loads. Restore paused; never start playback on launch without intent.
 
-T13 adds artists/albums/tracks/genres, disc/track sort, Now playing and embedded/folder artwork. Unknown metadata remains searchable. Test Unicode tags, missing tags, filename fallback, multi-disc albums, conflicting album artists, corrupt embedded art, and local artwork precedence. Real MP3 and FLAC playback, previous/next-track advancement, play/pause/seek/volume, queue ordering and continuous playback while switching Movies/Music are required. Audio and video use the same serialized playback owner; switching views alone never replaces the current queue.
+T13 adds artists/albums/tracks/genres, disc/track sort, Now playing and embedded/folder artwork. Show album, artist and genre posters plus a track cover on each track row, using real matched local artwork when available and an honest fallback when missing. Unknown metadata remains searchable. Test Unicode tags, missing tags, filename fallback, multi-disc albums, conflicting album artists, corrupt embedded art, and local artwork precedence. Clicking a track starts it immediately. Each track row has a leading accessible checkbox; Select all affects the current displayed list, and Play selected starts the checked tracks in list order. Test empty selection and switching lists while playback continues. Real MP3 and FLAC playback, previous/next-track advancement, play/pause/seek/volume, queue ordering and continuous playback while switching Movies/Music are required. Audio and video use the same serialized playback owner; switching views alone never replaces the current queue.
 
-T14 adds create/rename/edit/delete playlists (database objects only), add/remove/reorder entries including duplicates, queue from playlist, and restart persistence. Use transactions for ordering and test missing/offline entries. Renaming a playlist or display title never renames source files. Playlist import/export can follow v1; do not add it without a task.
+T14 adds create/rename/edit/delete playlists, add/remove/reorder entries including duplicates, shuffle stored playlist order, queue from playlist, and restart persistence. From the selected track list, add checked songs in displayed order either to a playlist chosen from a listbox or to a newly named playlist. Shuffling must preserve every entry and update the displayed order; use transactions for persistent ordering and test missing/offline entries. Renaming a playlist or display title never renames source files. Playlist import/export can follow v1; do not add it without a task.
 
 T15 adds audio/subtitle track selection, external local subtitle files, subtitle/audio delay, chapters, time jump, speed and aspect/scaling controls. Missing tracks disable the action with an explanation. Test signed track IDs/disabled subtitles, no chapters, malformed subtitles, unsupported speed, and real subtitle rendering. Multi-platform tools must work on the selected render path.
 
