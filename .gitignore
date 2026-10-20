@@ -1,0 +1,16 @@
+/target/
+/.cache/
+/artifacts/
+/runtime/
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pfx
+*.pem
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+Thumbs.db

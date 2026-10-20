@@ -1,0 +1,2292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#141312">
+  <link rel="icon" href="data:,">
+  <title>Archive · Premiere</title>
+  <style>
+    @font-face {
+      font-family: Inter;
+      src: url("../assets/InterVariable.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: dark;
+      --bg: #141312;
+      --paper: #e7ddcc;
+      --muted: #aaa196;
+      --accent: #f46b32;
+      --line: #3b3631;
+      --panel: #211e1b;
+      --sidebar-width: 204px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    html { background: var(--bg); scroll-behavior: smooth; }
+
+    body {
+      min-width: 320px;
+      min-height: 100dvh;
+      margin: 0;
+      color: var(--paper);
+      background: var(--bg);
+    }
+
+    button, input, select { font: inherit; }
+    button, a, select { -webkit-tap-highlight-color: transparent; }
+    button { color: inherit; }
+    a { color: inherit; text-decoration: none; }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .sidebar {
+      position: fixed;
+      z-index: 5;
+      inset: 0 auto 0 0;
+      display: flex;
+      width: var(--sidebar-width);
+      flex-direction: column;
+      padding: 28px 18px 20px;
+      border-right: 1px solid var(--line);
+      background: #181614;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      width: fit-content;
+      margin: 1px 0 43px 4px;
+      gap: 5px;
+    }
+
+    .brand-name {
+      color: var(--paper);
+      font-size: 15px;
+      font-weight: 760;
+      letter-spacing: .16em;
+    }
+
+    .brand-context {
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    .nav-group + .nav-group { margin-top: 33px; }
+
+    .nav-heading {
+      margin: 0 0 11px 9px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 680;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .route-list, .local-list { display: grid; gap: 4px; }
+
+    .route-link, .local-view {
+      display: flex;
+      min-height: 38px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 12px;
+      font-weight: 570;
+      text-align: left;
+      transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+    }
+
+    .route-link:hover, .local-view:hover {
+      color: var(--paper);
+      background: #211e1b;
+    }
+
+    .route-link[aria-current="page"] {
+      color: var(--paper);
+      border-color: #493a30;
+      background: #29221d;
+    }
+
+    .route-link[aria-current="page"]::before {
+      width: 3px;
+      height: 15px;
+      margin-left: -11px;
+      border-radius: 0 2px 2px 0;
+      background: var(--accent);
+      content: "";
+    }
+
+    .local-view {
+      width: 100%;
+      border: 0;
+      cursor: pointer;
+    }
+
+    .local-view[aria-pressed="true"] {
+      color: var(--paper);
+      background: #29221d;
+    }
+
+    .nav-count {
+      min-width: 20px;
+      color: #81776d;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .sidebar-bottom {
+      display: grid;
+      gap: 6px;
+      margin-top: auto;
+      padding: 17px 8px 0;
+      border-top: 1px solid var(--line);
+      color: #81776d;
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .sidebar-bottom strong {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 620;
+    }
+
+    .mobile-nav { display: none; }
+
+    .media-switch {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #1b1917;
+    }
+
+    .media-switch button {
+      min-height: 32px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 3px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .media-switch button[aria-pressed="true"] {
+      color: var(--paper);
+      background: #30221a;
+      box-shadow: inset 0 -2px var(--accent);
+    }
+
+    .desktop-media-switch { margin: -18px 0 28px; }
+    .mobile-media-switch { display: none; }
+
+    main {
+      width: min(100% - var(--sidebar-width), 1600px);
+      min-height: 100dvh;
+      margin-left: var(--sidebar-width);
+      padding: 25px clamp(26px, 3.05vw, 48px) 56px;
+    }
+
+    .topline {
+      display: flex;
+      min-height: 31px;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .breadcrumb {
+      color: #8b8176;
+      font-size: 10px;
+      font-weight: 620;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .preview-label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 520;
+      white-space: nowrap;
+    }
+
+    .preview-label span { color: var(--accent); }
+
+    .catalogue-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 28px;
+      padding: 25px 0 24px;
+    }
+
+    .catalogue-title { min-width: 0; }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 710;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--paper);
+      font-size: clamp(30px, 3.1vw, 43px);
+      font-weight: 680;
+      letter-spacing: -.055em;
+      line-height: 1;
+    }
+
+    .catalogue-intro {
+      max-width: 43ch;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .search-block {
+      display: grid;
+      width: min(100%, 282px);
+      flex: 0 0 282px;
+      gap: 7px;
+      padding-bottom: 2px;
+    }
+
+    .search-block label, .sort-block label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 620;
+      letter-spacing: .04em;
+    }
+
+    .search-wrap { position: relative; }
+
+    .search-input {
+      width: 100%;
+      height: 42px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--paper);
+      background: #1b1917;
+      font-size: 12px;
+    }
+
+    .search-input::placeholder { color: #80766c; opacity: 1; }
+    .search-input:focus { border-color: #8c4c31; outline: none; }
+
+    .toolbar {
+      display: flex;
+      min-height: 47px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 2px 0 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .genre-filters {
+      display: flex;
+      min-width: 0;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .genre-chip {
+      min-height: 29px;
+      padding: 0 11px;
+      border: 1px solid #403a34;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 10px;
+      font-weight: 560;
+      cursor: pointer;
+      transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+    }
+
+    .genre-chip:hover { color: var(--paper); border-color: #6c5b4d; }
+
+    .genre-chip[aria-pressed="true"] {
+      border-color: var(--accent);
+      color: var(--paper);
+      background: #30221a;
+    }
+
+    .sort-block {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex: 0 0 auto;
+    }
+
+    .sort-select {
+      min-height: 32px;
+      padding: 0 26px 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--paper);
+      background: #1b1917;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .results-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 18px 0 13px;
+    }
+
+    .results-heading h2 {
+      margin: 0;
+      color: var(--paper);
+      font-size: 15px;
+      font-weight: 630;
+      letter-spacing: -.025em;
+    }
+
+    .results-status {
+      color: #91877c;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .poster-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 24px 15px;
+    }
+
+    .poster-grid[hidden] { display: none; }
+
+    .film-card { min-width: 0; }
+
+    .poster-open {
+      position: relative;
+      display: block;
+      width: 100%;
+      overflow: hidden;
+      padding: 0;
+      aspect-ratio: 2 / 3;
+      border: 1px solid #3d3832;
+      border-radius: 4px;
+      background: var(--panel);
+      cursor: pointer;
+      text-align: left;
+      isolation: isolate;
+    }
+
+    .poster-open::after {
+      position: absolute;
+      z-index: 0;
+      inset: 24% 0 0;
+      background: linear-gradient(180deg, transparent 7%, rgb(17 15 14 / .2) 33%, rgb(17 15 14 / .88) 100%);
+      content: "";
+      transition: opacity 180ms ease;
+    }
+
+    .poster-image {
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 320ms cubic-bezier(.2,.7,.2,1), filter 220ms ease;
+    }
+
+    .poster-open:hover .poster-image { transform: scale(1.035); }
+    .poster-open:active .poster-image { transform: scale(1.01); }
+
+    .poster-topline {
+      position: absolute;
+      z-index: 1;
+      top: 12px;
+      right: 12px;
+      left: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: rgb(255 250 242 / .86);
+      font-size: 8px;
+      font-weight: 670;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+      text-shadow: 0 1px 9px rgb(0 0 0 / .65);
+    }
+
+    .poster-copy {
+      position: absolute;
+      z-index: 1;
+      right: 13px;
+      bottom: 15px;
+      left: 13px;
+      display: grid;
+      gap: 6px;
+      color: #fff9f0;
+      text-shadow: 0 2px 12px rgb(0 0 0 / .5);
+    }
+
+    .poster-overline {
+      color: #f7b18a;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .17em;
+      text-transform: uppercase;
+    }
+
+    .poster-art-title {
+      max-width: 10ch;
+      font-size: clamp(16px, 1.52vw, 21px);
+      font-weight: 760;
+      letter-spacing: -.055em;
+      line-height: .98;
+      text-transform: uppercase;
+      text-wrap: balance;
+    }
+
+    .poster-footer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: rgb(255 249 240 / .8);
+      font-size: 8px;
+      font-weight: 590;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .poster-footer::before {
+      width: 18px;
+      height: 1px;
+      background: var(--accent);
+      content: "";
+    }
+
+    .film-meta { padding: 9px 1px 0; }
+    .film-heading { margin: 0; }
+
+    .film-title {
+      display: block;
+      width: 100%;
+      overflow: hidden;
+      padding: 0;
+      border: 0;
+      color: var(--paper);
+      background: transparent;
+      font-size: 12px;
+      font-weight: 620;
+      letter-spacing: -.02em;
+      line-height: 1.35;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .film-title:hover { color: #fff4e6; }
+
+    .film-submeta, .film-genres {
+      margin: 5px 0 0;
+      overflow: hidden;
+      color: #9c9288;
+      font-size: 10px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .film-genres { color: #81776d; }
+
+    .card-list-toggle {
+      min-height: 27px;
+      margin-top: 6px;
+      padding: 0 1px;
+      border: 0;
+      color: #b7aca0;
+      background: transparent;
+      font-size: 10px;
+      font-weight: 560;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .card-list-toggle:hover { color: var(--accent); }
+    .card-list-toggle[aria-pressed="true"] { color: #ef9a70; }
+
+    .empty-state {
+      display: grid;
+      min-height: 230px;
+      align-content: center;
+      justify-items: start;
+      padding: 27px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #1b1917;
+    }
+
+    .empty-state[hidden] { display: none; }
+
+    .empty-state h3 {
+      margin: 0;
+      color: var(--paper);
+      font-size: 18px;
+      font-weight: 620;
+    }
+
+    .empty-state p {
+      max-width: 48ch;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .clear-filters {
+      min-height: 34px;
+      margin-top: 16px;
+      padding: 0 12px;
+      border: 1px solid #5a4538;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #2a211b;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .detail-dialog {
+      width: min(850px, calc(100vw - 32px));
+      max-width: none;
+      max-height: min(770px, calc(100dvh - 36px));
+      overflow: auto;
+      padding: 0;
+      border: 1px solid #51473e;
+      border-radius: 7px;
+      color: var(--paper);
+      background: #1e1b18;
+      box-shadow: 0 32px 100px rgb(0 0 0 / .52);
+    }
+
+    .detail-dialog::backdrop {
+      background: rgb(8 7 6 / .78);
+      backdrop-filter: blur(3px);
+    }
+
+    .dialog-layout {
+      display: grid;
+      min-height: 440px;
+      grid-template-columns: minmax(220px, .72fr) 1fr;
+    }
+
+    .dialog-poster {
+      position: relative;
+      min-height: 440px;
+      overflow: hidden;
+      background: #27221e;
+    }
+
+    .dialog-poster::after {
+      position: absolute;
+      inset: 40% 0 0;
+      background: linear-gradient(180deg, transparent, rgb(15 13 12 / .72));
+      content: "";
+    }
+
+    .dialog-poster img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .dialog-poster-caption {
+      position: absolute;
+      z-index: 1;
+      right: 20px;
+      bottom: 22px;
+      left: 20px;
+      color: #fff9f0;
+      font-size: 12px;
+      font-weight: 660;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    .dialog-copy {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 45px 37px 34px;
+    }
+
+    .dialog-close {
+      position: absolute;
+      top: 15px;
+      right: 16px;
+      min-width: 58px;
+      min-height: 31px;
+      padding: 0 9px;
+      border: 1px solid #51483f;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #2a2621;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .dialog-copy .eyebrow { margin-bottom: 11px; }
+
+    .dialog-copy h2 {
+      max-width: 13ch;
+      margin: 0;
+      color: var(--paper);
+      font-size: clamp(27px, 3vw, 38px);
+      font-weight: 680;
+      letter-spacing: -.055em;
+      line-height: 1.03;
+    }
+
+    .dialog-meta {
+      margin: 13px 0 0;
+      color: #b8aea3;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .dialog-summary {
+      max-width: 45ch;
+      margin: 22px 0 0;
+      color: #c2b8ac;
+      font-size: 13px;
+      line-height: 1.75;
+    }
+
+    .dialog-credits {
+      margin: 13px 0 0;
+      color: #8e8479;
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .dialog-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: auto;
+      padding-top: 27px;
+    }
+
+    .action-button {
+      min-height: 40px;
+      padding: 0 15px;
+      border: 1px solid #5b4e43;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #292520;
+      font-size: 11px;
+      font-weight: 620;
+      cursor: pointer;
+      transition: transform 120ms ease, background-color 120ms ease;
+    }
+
+    .action-button:active { transform: translateY(1px); }
+
+    .action-button.primary {
+      border-color: var(--accent);
+      color: #1a1511;
+      background: var(--accent);
+    }
+
+    .action-button.primary:hover { background: #ff8351; }
+    .action-button.secondary:hover { background: #38312a; }
+
+    .dialog-feedback {
+      margin: 13px 0 0;
+      color: #efae8d;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .dialog-feedback[hidden] { display: none; }
+
+    .music-library { min-width: 0; }
+
+    .music-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin: 0 0 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .music-tab {
+      min-height: 38px;
+      margin-bottom: -1px;
+      padding: 0 14px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 580;
+      cursor: pointer;
+    }
+
+    .music-tab:hover { color: var(--paper); }
+    .music-tab[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--paper); }
+
+    .music-toolbar {
+      display: flex;
+      min-height: 44px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 2px 0 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .music-filter-block {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .music-filter-block label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 620;
+    }
+
+    .music-results { min-width: 0; }
+
+    .music-context {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: -2px 0 14px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .music-context[hidden] { display: none; }
+
+    .context-clear {
+      flex: 0 0 auto;
+      min-height: 28px;
+      padding: 0 9px;
+      border: 1px solid #51483f;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #292520;
+      font-size: 9px;
+      cursor: pointer;
+    }
+
+    .album-grid, .artist-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 24px 15px;
+    }
+
+    .album-card, .artist-card { min-width: 0; }
+
+    .album-art-button, .artist-art-button {
+      position: relative;
+      display: block;
+      width: 100%;
+      overflow: hidden;
+      padding: 0;
+      aspect-ratio: 1;
+      border: 1px solid #3d3832;
+      border-radius: 4px;
+      background: var(--panel);
+      cursor: pointer;
+      isolation: isolate;
+    }
+
+    .album-art-button::after, .artist-art-button::after {
+      position: absolute;
+      z-index: 0;
+      inset: 45% 0 0;
+      background: linear-gradient(180deg, transparent, rgb(17 15 14 / .78));
+      content: "";
+    }
+
+    .album-art-button img, .artist-art-button img {
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 320ms cubic-bezier(.2,.7,.2,1), filter 220ms ease;
+    }
+
+    .album-art-button:hover img, .artist-art-button:hover img { transform: scale(1.035); }
+
+    .album-art-label, .artist-art-label {
+      position: absolute;
+      z-index: 1;
+      right: 11px;
+      bottom: 10px;
+      left: 11px;
+      color: #fff9f0;
+      font-size: 8px;
+      font-weight: 650;
+      letter-spacing: .12em;
+      text-align: left;
+      text-shadow: 0 2px 12px rgb(0 0 0 / .6);
+      text-transform: uppercase;
+    }
+
+    .audio-card-meta { padding: 9px 1px 0; }
+
+    .audio-card-title {
+      display: block;
+      width: 100%;
+      overflow: hidden;
+      padding: 0;
+      border: 0;
+      color: var(--paper);
+      background: transparent;
+      font-size: 12px;
+      font-weight: 620;
+      letter-spacing: -.02em;
+      line-height: 1.35;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .audio-card-title:hover { color: #fff4e6; }
+    .audio-card-submeta, .audio-card-detail {
+      margin: 5px 0 0;
+      overflow: hidden;
+      color: #9c9288;
+      font-size: 10px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .audio-card-detail { color: #81776d; }
+
+    .genre-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .genre-card {
+      display: grid;
+      min-height: 112px;
+      align-content: space-between;
+      justify-items: start;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: linear-gradient(135deg, #24201c, #191715);
+      text-align: left;
+    }
+
+    .genre-card h3 { margin: 0; font-size: 14px; font-weight: 640; }
+    .genre-card p { margin: 8px 0 0; color: var(--muted); font-size: 10px; }
+    .genre-card button {
+      min-height: 29px;
+      margin-top: 13px;
+      padding: 0 9px;
+      border: 1px solid #5a4538;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #2a211b;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .audio-track-list {
+      display: grid;
+      gap: 3px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .audio-track-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(100px, .6fr) auto;
+      align-items: center;
+      gap: 15px;
+      min-height: 66px;
+      padding: 10px 12px;
+      border: 1px solid transparent;
+      border-bottom-color: #302b26;
+      border-radius: 4px;
+    }
+
+    .audio-track-row:hover, .audio-track-row[aria-current="true"] { border-color: #443a31; background: #1d1a17; }
+    .track-main { min-width: 0; }
+    .track-title { margin: 0; font-size: 12px; font-weight: 620; }
+    .track-byline { margin: 4px 0 0; overflow: hidden; color: #92877c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .track-genre { margin: 0; color: #aaa095; font-size: 10px; }
+    .track-actions { display: flex; align-items: center; gap: 13px; }
+    .track-duration { color: #b8aea3; font-size: 10px; font-variant-numeric: tabular-nums; }
+    .track-select {
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid #5a4538;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #2a211b;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .track-select[aria-pressed="true"] { border-color: var(--accent); color: #ffb28e; }
+
+    .audio-player {
+      position: fixed;
+      z-index: 12;
+      right: 0;
+      bottom: 0;
+      left: var(--sidebar-width);
+      display: grid;
+      grid-template-columns: minmax(145px, .9fr) auto minmax(190px, 1fr) auto;
+      align-items: center;
+      gap: 17px;
+      min-height: 82px;
+      padding: 12px clamp(16px, 2.5vw, 34px);
+      border-top: 1px solid #51473e;
+      background: rgb(27 25 23 / .97);
+      box-shadow: 0 -12px 42px rgb(0 0 0 / .22);
+      backdrop-filter: blur(12px);
+    }
+
+    .audio-player[hidden] { display: none; }
+    .player-context { display: grid; min-width: 0; gap: 3px; }
+    .player-label { margin: 0; color: var(--accent); font-size: 8px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .player-context strong, .player-context span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .player-context strong { font-size: 12px; font-weight: 640; }
+    .player-context span { color: var(--muted); font-size: 10px; }
+    .player-controls { display: flex; align-items: center; gap: 6px; }
+    .player-button {
+      min-height: 34px;
+      padding: 0 10px;
+      border: 1px solid #51483f;
+      border-radius: 4px;
+      color: var(--paper);
+      background: #2a2621;
+      font-size: 10px;
+      font-weight: 580;
+      cursor: pointer;
+    }
+    .player-button:hover:not(:disabled) { border-color: #8d644c; background: #332a23; }
+    .player-button:disabled { color: #786f65; cursor: not-allowed; }
+    .player-play { border-color: var(--accent); color: #1a1511; background: var(--accent); font-weight: 680; }
+    .player-play:hover:not(:disabled) { background: #ff8351; }
+    .player-status { min-width: 0; }
+    .player-status p { margin: 0; color: #b9a999; font-size: 10px; line-height: 1.45; }
+    .player-queue { position: relative; }
+    .queue-toggle { display: flex; align-items: center; gap: 8px; }
+    #queue-count { color: #ef9a70; font-variant-numeric: tabular-nums; }
+    .queue-panel {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 12px);
+      width: min(350px, calc(100vw - 32px));
+      max-height: min(48vh, 390px);
+      overflow: auto;
+      padding: 15px;
+      border: 1px solid #51473e;
+      border-radius: 6px;
+      background: #201d1a;
+      box-shadow: 0 16px 44px rgb(0 0 0 / .45);
+    }
+    .queue-panel h2 { margin: 0; font-size: 14px; font-weight: 640; }
+    .queue-panel > p { margin: 5px 0 10px; color: var(--muted); font-size: 10px; }
+    .queue-panel ol { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+    .queue-panel li button {
+      display: grid;
+      width: 100%;
+      gap: 4px;
+      padding: 8px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: var(--paper);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .queue-panel li button[aria-current="true"] { border-color: #4a3b30; background: #2a211b; }
+    .queue-panel li strong { font-size: 11px; font-weight: 610; }
+    .queue-panel li span { color: var(--muted); font-size: 9px; }
+
+    body.has-player main { padding-bottom: 120px; }
+
+    @media (max-width: 1279px) {
+      .poster-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .album-grid, .artist-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .poster-art-title { font-size: clamp(16px, 2vw, 21px); }
+    }
+
+    @media (max-width: 1023px) {
+      :root { --sidebar-width: 188px; }
+      main { padding-right: 28px; padding-left: 28px; }
+      .poster-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 21px 13px; }
+      .album-grid, .artist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 21px 13px; }
+      .poster-art-title { font-size: clamp(15px, 2.45vw, 20px); }
+      .film-title { font-size: 11px; }
+      .catalogue-head { gap: 18px; }
+      .search-block { flex-basis: 250px; }
+      .genre-chip { padding: 0 9px; }
+    }
+
+    @media (max-width: 900px) {
+      :root { --sidebar-width: 156px; }
+      .sidebar { padding: 23px 12px 17px; }
+      .brand { margin: 2px 0 33px 4px; }
+      .brand-name { font-size: 13px; }
+      .nav-group + .nav-group { margin-top: 26px; }
+      main { padding: 20px 19px 42px; }
+      .catalogue-head { align-items: flex-start; flex-direction: column; }
+      .search-block { width: min(100%, 340px); flex: 0 1 auto; }
+      .poster-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 14px; }
+      .album-grid, .artist-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 14px; }
+      .poster-art-title { font-size: clamp(18px, 3.15vw, 24px); }
+      .toolbar { align-items: flex-start; flex-direction: column; padding-top: 10px; }
+      .sort-block { align-self: flex-end; }
+      .audio-player {
+        grid-template-columns: minmax(120px, 1fr) auto auto;
+        grid-template-areas: "context controls queue" "status status status";
+        gap: 8px 12px;
+        padding: 10px 18px;
+      }
+      .player-context { grid-area: context; }
+      .player-controls { grid-area: controls; }
+      .player-status { grid-area: status; }
+      .player-queue { grid-area: queue; }
+      body.has-player main { padding-bottom: 122px; }
+    }
+
+    @media (max-width: 560px) {
+      :root { --sidebar-width: 0px; }
+      .sidebar {
+        position: sticky;
+        z-index: 6;
+        top: 0;
+        width: 100%;
+        height: auto;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        padding: 10px 14px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand { margin: 0; }
+      .brand-name { font-size: 12px; }
+      .brand-context { display: none; }
+      .nav-group { display: none; }
+      .sidebar-bottom { display: none; }
+      .desktop-media-switch { display: none; }
+      .mobile-media-switch { display: grid; }
+      .mobile-nav {
+        display: grid;
+        width: 100%;
+        grid-template-columns: repeat(3, max-content);
+        gap: 2px 5px;
+      }
+      .mobile-nav a, .mobile-nav button {
+        padding: 8px 7px;
+        border: 0;
+        border-radius: 4px;
+        color: var(--muted);
+        background: transparent;
+        font-size: 9px;
+        text-align: left;
+        cursor: pointer;
+      }
+      .mobile-nav a[aria-current="page"], .mobile-nav button[aria-pressed="true"] { color: var(--paper); background: #29221d; }
+      main { width: 100%; margin: 0; padding: 16px 15px 34px; }
+      .topline { min-height: 28px; gap: 8px; }
+      .breadcrumb, .preview-label { font-size: 8px; }
+      .catalogue-head { padding: 19px 0 18px; }
+      .catalogue-intro { font-size: 11px; }
+      .poster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 12px; }
+      .album-grid, .artist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19px 12px; }
+      .poster-art-title { font-size: clamp(19px, 6vw, 25px); }
+      .genre-filters { gap: 6px; }
+      .genre-chip { min-height: 28px; padding: 0 8px; font-size: 9px; }
+      .detail-dialog { width: calc(100vw - 20px); }
+      .dialog-layout { grid-template-columns: 1fr; }
+      .dialog-poster { min-height: 210px; aspect-ratio: 16 / 8; }
+      .dialog-copy { padding: 35px 22px 24px; }
+      .dialog-copy h2 { padding-right: 42px; }
+      .dialog-summary { margin-top: 15px; font-size: 12px; }
+      .dialog-actions { margin-top: 15px; padding-top: 8px; }
+      .music-toolbar { align-items: flex-start; flex-direction: column; }
+      .music-context { align-items: flex-start; flex-direction: column; }
+      .genre-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .audio-track-row { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; padding: 10px 9px; }
+      .track-genre { display: none; }
+      .track-actions { gap: 8px; }
+      .audio-player {
+        left: 0;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "context queue" "controls controls" "status status";
+        gap: 8px 12px;
+        padding: 10px 13px 11px;
+      }
+      .player-context { grid-area: context; }
+      .player-controls { grid-area: controls; }
+      .player-status { grid-area: status; }
+      .player-queue { grid-area: queue; }
+      .player-button { min-height: 32px; }
+      .player-controls .player-button { flex: 1; }
+      body.has-player main { padding-bottom: 185px; }
+      .queue-panel { position: fixed; right: 10px; bottom: 150px; left: 10px; width: auto; max-height: 42vh; }
+    }
+
+    @media (max-width: 360px) {
+      .mobile-nav a, .mobile-nav button { padding: 8px 5px; font-size: 8px; }
+      .preview-label { white-space: normal; text-align: right; }
+      .genre-chip { padding: 0 7px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar" aria-label="Premiere navigation">
+    <a class="brand" href="../index.html" aria-label="Premiere overview">
+      <span class="brand-name">PREMIERE</span>
+      <span class="brand-context">VLC · Local library</span>
+    </a>
+
+    <div class="media-switch desktop-media-switch" role="group" aria-label="Switch library">
+      <button type="button" data-mode="movies" aria-pressed="true">Movies</button>
+      <button type="button" data-mode="music" aria-pressed="false">Music</button>
+    </div>
+
+    <nav class="nav-group" aria-label="Design proposals">
+      <p class="nav-heading">Premiere</p>
+      <div class="route-list">
+        <a class="route-link" href="../index.html">Overview</a>
+        <a class="route-link" href="cinema.html">Cinema</a>
+        <a class="route-link" href="archive.html" aria-current="page">Archive</a>
+        <a class="route-link" href="spotlight.html">Spotlight</a>
+      </div>
+    </nav>
+
+    <nav class="nav-group movie-collection-nav" aria-label="Library views" data-movie-only>
+      <p class="nav-heading">Your collection</p>
+      <div class="local-list">
+        <button class="local-view" type="button" data-view="all" aria-pressed="true">
+          <span>All films</span><span class="nav-count" id="all-count">6</span>
+        </button>
+        <button class="local-view" type="button" data-view="my-list" aria-pressed="false">
+          <span>My list</span><span class="nav-count" id="saved-count">0</span>
+        </button>
+      </div>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <strong>Design preview · sample library</strong>
+      <span>Local interactions only</span>
+    </div>
+    <div class="media-switch mobile-media-switch" role="group" aria-label="Switch library">
+      <button type="button" data-mode="movies" aria-pressed="true">Movies</button>
+      <button type="button" data-mode="music" aria-pressed="false">Music</button>
+    </div>
+    <nav class="mobile-nav" aria-label="Design proposals">
+      <a href="../index.html">Home</a>
+      <a href="cinema.html">Cinema</a>
+      <a href="archive.html" aria-current="page">Archive</a>
+      <a href="spotlight.html">Spotlight</a>
+      <button type="button" data-view="all" aria-pressed="true" data-movie-only>All films</button>
+      <button type="button" data-view="my-list" aria-pressed="false" data-movie-only>My list</button>
+    </nav>
+  </aside>
+
+  <main id="catalogue">
+    <div id="movies-view">
+    <div class="topline">
+      <div class="breadcrumb">Premiere <span aria-hidden="true">/</span> Movies</div>
+      <div class="preview-label"><span>Design preview</span> · sample library</div>
+    </div>
+
+    <header class="catalogue-head">
+      <div class="catalogue-title">
+        <p class="eyebrow">Your films, in one place</p>
+        <h1>Archive</h1>
+        <p class="catalogue-intro">A clear, browsable shelf for the films already in your library.</p>
+      </div>
+      <div class="search-block">
+        <label for="film-search">Search your films</label>
+        <div class="search-wrap">
+          <input class="search-input" id="film-search" type="search" autocomplete="off" placeholder="Title, year, genre or story">
+        </div>
+      </div>
+    </header>
+
+    <section class="toolbar" aria-label="Catalogue controls">
+      <div class="genre-filters" id="genre-filters" role="group" aria-label="Filter by genre">
+        <button class="genre-chip" type="button" data-genre="all" aria-pressed="true">All films</button>
+        <button class="genre-chip" type="button" data-genre="Drama" aria-pressed="false">Drama</button>
+        <button class="genre-chip" type="button" data-genre="Adventure" aria-pressed="false">Adventure</button>
+        <button class="genre-chip" type="button" data-genre="Romance" aria-pressed="false">Romance</button>
+        <button class="genre-chip" type="button" data-genre="Science fiction" aria-pressed="false">Science fiction</button>
+      </div>
+      <div class="sort-block">
+        <label for="sort-films">Sort by</label>
+        <select class="sort-select" id="sort-films">
+          <option value="added">Recently added</option>
+          <option value="title">Title A–Z</option>
+          <option value="year-desc">Year newest</option>
+          <option value="year-asc">Year oldest</option>
+        </select>
+      </div>
+    </section>
+
+    <div class="results-heading">
+      <h2 id="results-title">All films</h2>
+      <p class="results-status" id="results-status" role="status" aria-live="polite">6 films</p>
+    </div>
+
+    <section class="poster-grid" id="film-grid" aria-label="Films"></section>
+
+    <section class="empty-state" id="empty-state" hidden aria-live="polite">
+      <h3 id="empty-title">No films found</h3>
+      <p id="empty-copy">Try another title or genre, or clear the current filters.</p>
+      <button class="clear-filters" type="button" id="clear-filters">Clear filters</button>
+    </section>
+    </div>
+
+    <section class="music-library" id="music-view" hidden aria-labelledby="music-page-title">
+      <div class="topline">
+        <div class="breadcrumb">Premiere <span aria-hidden="true">/</span> Music</div>
+        <div class="preview-label"><span>Design preview</span> · sample library</div>
+      </div>
+
+      <header class="catalogue-head">
+        <div class="catalogue-title">
+          <p class="eyebrow">Artists, albums and tracks</p>
+          <h1 id="music-page-title">Music</h1>
+          <p class="catalogue-intro">A local music shelf for browsing sample albums and choosing a track. Preview controls change state only; no audio is loaded.</p>
+        </div>
+        <div class="search-block">
+          <label for="music-search">Search your music</label>
+          <div class="search-wrap">
+            <input class="search-input" id="music-search" type="search" autocomplete="off" placeholder="Album, artist, track or genre">
+          </div>
+        </div>
+      </header>
+
+      <nav class="music-tabs" role="tablist" aria-label="Browse music">
+        <button class="music-tab" type="button" role="tab" id="tab-albums" aria-controls="music-results" aria-selected="true" data-music-view="albums">Albums</button>
+        <button class="music-tab" type="button" role="tab" id="tab-artists" aria-controls="music-results" aria-selected="false" data-music-view="artists">Artists</button>
+        <button class="music-tab" type="button" role="tab" id="tab-tracks" aria-controls="music-results" aria-selected="false" data-music-view="tracks">Tracks</button>
+        <button class="music-tab" type="button" role="tab" id="tab-genres" aria-controls="music-results" aria-selected="false" data-music-view="genres">Genres</button>
+      </nav>
+
+      <section class="music-toolbar" aria-label="Music filters and sorting">
+        <div class="music-filter-block">
+          <label for="music-genre">Genre</label>
+          <select class="sort-select" id="music-genre">
+            <option value="all">All genres</option>
+            <option value="Ambient folk">Ambient folk</option>
+            <option value="Indie folk">Indie folk</option>
+            <option value="Acoustic">Acoustic</option>
+            <option value="Indie rock">Indie rock</option>
+            <option value="Modern piano">Modern piano</option>
+            <option value="Dream pop">Dream pop</option>
+          </select>
+        </div>
+        <div class="sort-block">
+          <label for="music-sort">Sort by</label>
+          <select class="sort-select" id="music-sort">
+            <option value="recent">Recently added</option>
+            <option value="title">Title A–Z</option>
+            <option value="artist">Artist A–Z</option>
+          </select>
+        </div>
+      </section>
+
+      <div class="results-heading">
+        <h2 id="music-results-heading" tabindex="-1">Albums</h2>
+        <p class="results-status" id="music-results-status" role="status" aria-live="polite">6 albums</p>
+      </div>
+      <div class="music-context" id="music-context" hidden>
+        <span id="music-context-text"></span>
+        <button class="context-clear" type="button" id="clear-music-context">All tracks</button>
+      </div>
+      <section class="music-results" id="music-results" role="tabpanel" aria-labelledby="tab-albums"></section>
+      <section class="empty-state" id="music-empty-state" hidden aria-live="polite">
+        <h3>No music found</h3>
+        <p>Try a different search or genre, or clear the current filters.</p>
+        <button class="clear-filters" type="button" id="clear-music-filters">Clear filters</button>
+      </section>
+    </section>
+  </main>
+
+  <aside class="audio-player" id="audio-player" aria-label="Now playing preview" hidden>
+    <div class="player-context">
+      <p class="player-label">Now playing · sample preview</p>
+      <strong id="player-track-title">Choose a track</strong>
+      <span id="player-track-byline">Sample library</span>
+    </div>
+    <div class="player-controls" role="group" aria-label="Preview controls">
+      <button class="player-button" type="button" id="previous-track" aria-label="Previous track" disabled>Previous</button>
+      <button class="player-button player-play" type="button" id="toggle-preview">Play preview</button>
+      <button class="player-button" type="button" id="next-track" aria-label="Next track" disabled>Next</button>
+    </div>
+    <div class="player-status">
+      <p id="player-feedback" role="status" aria-live="polite">Preview controls only · no audio output.</p>
+    </div>
+    <div class="player-queue">
+      <button class="player-button queue-toggle" type="button" id="queue-toggle" aria-expanded="false" aria-controls="queue-panel" disabled>Queue <span id="queue-count">0</span></button>
+      <section class="queue-panel" id="queue-panel" aria-labelledby="queue-title" hidden>
+        <h2 id="queue-title">Preview queue</h2>
+        <p>Sample track order · no audio is loaded.</p>
+        <ol id="queue-list"></ol>
+      </section>
+    </div>
+  </aside>
+
+  <dialog class="detail-dialog" id="film-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-summary">
+    <div class="dialog-layout">
+      <div class="dialog-poster">
+        <img id="dialog-image" src="../assets/golden-hour.jpg" alt="">
+        <div class="dialog-poster-caption" id="dialog-poster-caption"></div>
+      </div>
+      <div class="dialog-copy">
+        <button class="dialog-close" type="button" id="dialog-close" autofocus>Close</button>
+        <p class="eyebrow" id="dialog-kicker">Film details</p>
+        <h2 id="dialog-title"></h2>
+        <p class="dialog-meta" id="dialog-meta"></p>
+        <p class="dialog-summary" id="dialog-summary"></p>
+        <p class="dialog-credits" id="dialog-credits"></p>
+        <div class="dialog-actions">
+          <button class="action-button primary" type="button" id="play-film">Play film</button>
+          <button class="action-button secondary" type="button" id="dialog-list-toggle" aria-pressed="false">Add to My List</button>
+        </div>
+        <p class="dialog-feedback" id="dialog-feedback" role="status" aria-live="polite" hidden>Preview only. Playback will connect in the app.</p>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    const films = [
+      {
+        id: "long-way-home",
+        title: "The Long Way Home",
+        year: 2024,
+        runtime: "1h 48m",
+        genres: ["Drama", "Adventure"],
+        image: "../assets/golden-hour.jpg",
+        alt: "Low golden sun over an open meadow with a line of trees.",
+        synopsis: "After years away, Mara takes the back roads to the town she left behind and finds that every familiar place has changed in a small way.",
+        director: "Directed by Elise Moreau",
+        added: 6,
+        posterLine: "Some places are worth the detour."
+      },
+      {
+        id: "above-the-clouds",
+        title: "Above the Clouds",
+        year: 2023,
+        runtime: "1h 46m",
+        genres: ["Adventure", "Drama"],
+        image: "../assets/alpine.jpg",
+        alt: "A two-lane road climbing through a red-rock canyon toward a dark ridge.",
+        synopsis: "When a remote weather station goes silent, a young technician crosses the pass to find its keeper before the first winter storm arrives.",
+        director: "Directed by Adrian Keller",
+        added: 5,
+        posterLine: "The weather doesn't keep secrets."
+      },
+      {
+        id: "blue-between",
+        title: "Blue Between",
+        year: 2022,
+        runtime: "1h 39m",
+        genres: ["Drama", "Romance"],
+        image: "../assets/coast.jpg",
+        alt: "Blue water and a pale horizon seen from a quiet coast.",
+        synopsis: "Two strangers keep meeting at the same coastal stop. Their short conversations become the one part of each week neither wants to miss.",
+        director: "Directed by Noémie Valette",
+        added: 4,
+        posterLine: "Between the waves, a beginning."
+      },
+      {
+        id: "quiet-universe",
+        title: "A Quiet Universe",
+        year: 2025,
+        runtime: "2h 03m",
+        genres: ["Science fiction", "Drama"],
+        image: "../assets/night-sky.jpg",
+        alt: "An empty city street with blue lights after dark.",
+        synopsis: "During a citywide blackout, a radio engineer follows a faint signal from the last station still on air.",
+        director: "Directed by Samir Nadeem",
+        added: 3,
+        posterLine: "Listen long enough."
+      },
+      {
+        id: "where-road-ends",
+        title: "Where the Road Ends",
+        year: 2021,
+        runtime: "1h 53m",
+        genres: ["Drama"],
+        image: "../assets/desert.jpg",
+        alt: "Sunlight breaking over layers of dark mountain ridges.",
+        synopsis: "A small desert motel draws together three travellers at different turning points, each sure they are only stopping for one night.",
+        director: "Directed by Rowan Hale",
+        added: 2,
+        posterLine: "Every road has a last turn."
+      },
+      {
+        id: "green-distance",
+        title: "The Green Distance",
+        year: 2020,
+        runtime: "1h 42m",
+        genres: ["Drama", "Adventure"],
+        image: "../assets/forest.jpg",
+        alt: "A mountain lake and fir trees under the evening sun.",
+        synopsis: "A field researcher returns to map the forest where she grew up and finds that the landscape remembers more than she does.",
+        director: "Directed by Inès Laurent",
+        added: 1,
+        posterLine: "A world that still remembers you."
+      }
+    ];
+
+    const audioAlbums = [
+      {
+        id: "album-first-light", title: "First Light", artistId: "mara-vale", artist: "Mara Vale", year: 2025,
+        genre: "Ambient folk", cover: "../assets/golden-hour.jpg", alt: "Low golden sun over an open meadow with a line of trees.",
+        added: 6, trackIds: ["track-first-light"]
+      },
+      {
+        id: "album-open-road", title: "Open Road", artistId: "ellis-ward", artist: "Ellis Ward", year: 2024,
+        genre: "Indie folk", cover: "../assets/alpine.jpg", alt: "A two-lane road climbing through a red-rock canyon toward a dark ridge.",
+        added: 5, trackIds: ["track-open-road"]
+      },
+      {
+        id: "album-almost-home", title: "Almost Home", artistId: "june-delaney", artist: "June Delaney", year: 2023,
+        genre: "Acoustic", cover: "../assets/coast.jpg", alt: "Blue water and a pale horizon seen from a quiet coast.",
+        added: 4, trackIds: ["track-almost-home"]
+      },
+      {
+        id: "album-a-little-further", title: "A Little Further", artistId: "weekend-assembly", artist: "The Long Weekend", year: 2022,
+        genre: "Indie rock", cover: "../assets/night-sky.jpg", alt: "An empty city street with blue lights after dark.",
+        added: 3, trackIds: ["track-a-little-further"]
+      },
+      {
+        id: "album-quiet-hours", title: "The Quiet Hours", artistId: "solenne", artist: "Solenne", year: 2021,
+        genre: "Modern piano", cover: "../assets/desert.jpg", alt: "Sunlight breaking over layers of dark mountain ridges.",
+        added: 2, trackIds: ["track-quiet-hours"]
+      },
+      {
+        id: "album-last-light", title: "Last Light", artistId: "atlas-bloom", artist: "Atlas Bloom", year: 2020,
+        genre: "Dream pop", cover: "../assets/forest.jpg", alt: "A mountain lake and fir trees under the evening sun.",
+        added: 1, trackIds: ["track-last-light"]
+      }
+    ];
+
+    const audioArtists = [
+      { id: "mara-vale", name: "Mara Vale", albumIds: ["album-first-light"] },
+      { id: "ellis-ward", name: "Ellis Ward", albumIds: ["album-open-road"] },
+      { id: "june-delaney", name: "June Delaney", albumIds: ["album-almost-home"] },
+      { id: "weekend-assembly", name: "The Long Weekend", albumIds: ["album-a-little-further"] },
+      { id: "solenne", name: "Solenne", albumIds: ["album-quiet-hours"] },
+      { id: "atlas-bloom", name: "Atlas Bloom", albumIds: ["album-last-light"] }
+    ];
+
+    const audioTracks = [
+      { id: "track-first-light", title: "First Light", albumId: "album-first-light", artistId: "mara-vale", artist: "Mara Vale", genre: "Ambient folk", duration: "4:12", seconds: 252, year: 2025 },
+      { id: "track-open-road", title: "Open Road", albumId: "album-open-road", artistId: "ellis-ward", artist: "Ellis Ward", genre: "Indie folk", duration: "3:56", seconds: 236, year: 2024 },
+      { id: "track-almost-home", title: "Almost Home", albumId: "album-almost-home", artistId: "june-delaney", artist: "June Delaney", genre: "Acoustic", duration: "3:41", seconds: 221, year: 2023 },
+      { id: "track-a-little-further", title: "A Little Further", albumId: "album-a-little-further", artistId: "weekend-assembly", artist: "The Long Weekend", genre: "Indie rock", duration: "3:33", seconds: 213, year: 2022 },
+      { id: "track-quiet-hours", title: "The Quiet Hours", albumId: "album-quiet-hours", artistId: "solenne", artist: "Solenne", genre: "Modern piano", duration: "2:57", seconds: 177, year: 2021 },
+      { id: "track-last-light", title: "Last Light", albumId: "album-last-light", artistId: "atlas-bloom", artist: "Atlas Bloom", genre: "Dream pop", duration: "4:28", seconds: 268, year: 2020 }
+    ];
+
+    const audioGenres = ["Ambient folk", "Indie folk", "Acoustic", "Indie rock", "Modern piano", "Dream pop"];
+    const state = {
+      mode: initialLibraryMode(window.location.hash),
+      query: "", genre: "all", view: "all", sort: "added", savedIds: new Set(),
+      musicView: "albums", musicQuery: "", musicGenre: "all", musicSort: "recent",
+      selectedAlbumId: null, selectedArtistId: null,
+      player: { queueIds: [], queueIndex: -1, isPlaying: false, queueOpen: false }
+    };
+    const filmGrid = document.getElementById("film-grid");
+    const searchInput = document.getElementById("film-search");
+    const sortSelect = document.getElementById("sort-films");
+    const resultsTitle = document.getElementById("results-title");
+    const resultsStatus = document.getElementById("results-status");
+    const emptyState = document.getElementById("empty-state");
+    const dialog = document.getElementById("film-dialog");
+    const dialogImage = document.getElementById("dialog-image");
+    const dialogTitle = document.getElementById("dialog-title");
+    const dialogMeta = document.getElementById("dialog-meta");
+    const dialogSummary = document.getElementById("dialog-summary");
+    const dialogCredits = document.getElementById("dialog-credits");
+    const dialogKicker = document.getElementById("dialog-kicker");
+    const dialogListToggle = document.getElementById("dialog-list-toggle");
+    const dialogFeedback = document.getElementById("dialog-feedback");
+    const moviesViewRoot = document.getElementById("movies-view");
+    const musicViewRoot = document.getElementById("music-view");
+    const musicSearch = document.getElementById("music-search");
+    const musicGenreSelect = document.getElementById("music-genre");
+    const musicSortSelect = document.getElementById("music-sort");
+    const musicResults = document.getElementById("music-results");
+    const musicResultsHeading = document.getElementById("music-results-heading");
+    const musicResultsStatus = document.getElementById("music-results-status");
+    const musicContext = document.getElementById("music-context");
+    const musicContextText = document.getElementById("music-context-text");
+    const musicEmptyState = document.getElementById("music-empty-state");
+    const audioPlayer = document.getElementById("audio-player");
+    const playerTrackTitle = document.getElementById("player-track-title");
+    const playerTrackByline = document.getElementById("player-track-byline");
+    const playerFeedback = document.getElementById("player-feedback");
+    const previousTrackButton = document.getElementById("previous-track");
+    const togglePreviewButton = document.getElementById("toggle-preview");
+    const nextTrackButton = document.getElementById("next-track");
+    const queueToggle = document.getElementById("queue-toggle");
+    const queueCount = document.getElementById("queue-count");
+    const queuePanel = document.getElementById("queue-panel");
+    const queueList = document.getElementById("queue-list");
+    let selectedFilmId = null;
+    let returnFocusId = null;
+    let returnFocusNode = null;
+
+    function normalize(value) {
+      return String(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
+    }
+
+    function visibleFilms(items, options) {
+      const query = normalize(options.query || "").trim();
+      const filtered = items.filter((film) => {
+        if (options.view === "my-list" && !options.savedIds.has(film.id)) return false;
+        if (options.genre !== "all" && !film.genres.includes(options.genre)) return false;
+        if (!query) return true;
+        const haystack = normalize([film.title, film.year, film.runtime, film.genres.join(" "), film.synopsis].join(" "));
+        return haystack.includes(query);
+      });
+
+      const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+      const comparators = {
+        added: (a, b) => b.added - a.added,
+        title: (a, b) => collator.compare(a.title, b.title),
+        "year-desc": (a, b) => b.year - a.year || collator.compare(a.title, b.title),
+        "year-asc": (a, b) => a.year - b.year || collator.compare(a.title, b.title)
+      };
+      return filtered.sort(comparators[options.sort] || comparators.added);
+    }
+
+    function visibleAudioRecords(view, options) {
+      const query = normalize(options.query || "").trim();
+      const genre = options.genre || "all";
+      const albumMatches = (album) => {
+        if (genre !== "all" && album.genre !== genre) return false;
+        const albumTracks = audioTracks.filter((track) => track.albumId === album.id);
+        const haystack = [album.title, album.artist, album.year, album.genre, ...albumTracks.map((track) => track.title)].join(" ");
+        return !query || normalize(haystack).includes(query);
+      };
+      let records = [];
+
+      if (view === "albums") {
+        records = audioAlbums.filter(albumMatches);
+      } else if (view === "artists") {
+        records = audioArtists.filter((artist) => {
+          const artistAlbums = audioAlbums.filter((album) => album.artistId === artist.id && (genre === "all" || album.genre === genre));
+          const artistTracks = audioTracks.filter((track) => track.artistId === artist.id && (genre === "all" || track.genre === genre));
+          const haystack = [artist.name, ...artistAlbums.flatMap((album) => [album.title, album.year, album.genre]), ...artistTracks.map((track) => track.title)].join(" ");
+          return artistAlbums.length > 0 && (!query || normalize(haystack).includes(query));
+        }).map((artist) => ({
+          ...artist,
+          added: Math.max(...audioAlbums.filter((album) => album.artistId === artist.id).map((album) => album.added))
+        }));
+      } else if (view === "tracks") {
+        records = audioTracks.filter((track) => {
+          if (genre !== "all" && track.genre !== genre) return false;
+          if (options.albumId && track.albumId !== options.albumId) return false;
+          if (options.artistId && track.artistId !== options.artistId) return false;
+          const album = audioAlbums.find((item) => item.id === track.albumId);
+          const haystack = [track.title, track.artist, track.genre, track.year, album?.title].join(" ");
+          return !query || normalize(haystack).includes(query);
+        }).map((track) => ({
+          ...track,
+          added: audioAlbums.find((album) => album.id === track.albumId)?.added || 0
+        }));
+      } else if (view === "genres") {
+        records = audioGenres.filter((name) => {
+          if (genre !== "all" && name !== genre) return false;
+          const genreAlbums = audioAlbums.filter((album) => album.genre === name);
+          const genreTracks = audioTracks.filter((track) => track.genre === name);
+          const haystack = [name, ...genreAlbums.flatMap((album) => [album.title, album.artist, album.year]), ...genreTracks.map((track) => track.title)].join(" ");
+          return !query || normalize(haystack).includes(query);
+        }).map((name) => ({ name, added: Math.max(...audioAlbums.filter((album) => album.genre === name).map((album) => album.added)) }));
+      }
+
+      const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+      const titleOf = (record) => record.title || record.name;
+      const artistOf = (record) => record.artist || record.name || audioArtists.find((artist) => artist.id === record.artistId)?.name || "";
+      const comparators = {
+        recent: (a, b) => (b.added || 0) - (a.added || 0) || collator.compare(titleOf(a), titleOf(b)),
+        title: (a, b) => collator.compare(titleOf(a), titleOf(b)),
+        artist: (a, b) => collator.compare(artistOf(a), artistOf(b)) || collator.compare(titleOf(a), titleOf(b))
+      };
+      if (view === "tracks" && options.albumId && options.sort === "recent") {
+        const album = audioAlbums.find((item) => item.id === options.albumId);
+        if (album) return records.sort((a, b) => album.trackIds.indexOf(a.id) - album.trackIds.indexOf(b.id));
+      }
+      return records.sort(comparators[options.sort] || comparators.recent);
+    }
+
+    function queueStepIndex(index, delta, length) {
+      const nextIndex = index + delta;
+      return nextIndex >= 0 && nextIndex < length ? nextIndex : index;
+    }
+
+    function initialLibraryMode(hash) {
+      return String(hash || "").toLocaleLowerCase() === "#music" ? "music" : "movies";
+    }
+
+    function makeElement(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = text;
+      return element;
+    }
+
+    function makeCard(film) {
+      const article = makeElement("article", "film-card");
+      const openButton = makeElement("button", "poster-open");
+      openButton.type = "button";
+      openButton.dataset.openId = film.id;
+      openButton.setAttribute("aria-label", `Open details for ${film.title}`);
+
+      const image = makeElement("img", "poster-image");
+      image.src = film.image;
+      image.alt = film.alt;
+      image.loading = "lazy";
+      image.decoding = "async";
+      openButton.append(image);
+
+      const posterTopline = makeElement("span", "poster-topline");
+      posterTopline.append(makeElement("span", "", "FEATURE FILM"), makeElement("span", "", String(film.year)));
+      openButton.append(posterTopline);
+
+      const posterCopy = makeElement("span", "poster-copy");
+      posterCopy.append(
+        makeElement("span", "poster-overline", film.genres[0]),
+        makeElement("span", "poster-art-title", film.title),
+        makeElement("span", "poster-footer", film.posterLine)
+      );
+      openButton.append(posterCopy);
+      openButton.addEventListener("click", () => openDetails(film, openButton));
+      article.append(openButton);
+
+      const meta = makeElement("div", "film-meta");
+      const titleButton = makeElement("button", "film-title", film.title);
+      titleButton.type = "button";
+      titleButton.dataset.openId = film.id;
+      titleButton.addEventListener("click", () => openDetails(film, titleButton));
+      const titleHeading = makeElement("h3", "film-heading");
+      titleHeading.append(titleButton);
+      meta.append(titleHeading);
+      meta.append(makeElement("p", "film-submeta", `${film.year} · ${film.runtime}`));
+      meta.append(makeElement("p", "film-genres", film.genres.join(" · ")));
+
+      const listButton = makeElement("button", "card-list-toggle", state.savedIds.has(film.id) ? "In My List" : "Add to My List");
+      listButton.type = "button";
+      listButton.dataset.listId = film.id;
+      listButton.setAttribute("aria-pressed", String(state.savedIds.has(film.id)));
+      listButton.setAttribute("aria-label", `${state.savedIds.has(film.id) ? "Remove" : "Add"} ${film.title} ${state.savedIds.has(film.id) ? "from" : "to"} My List`);
+      listButton.addEventListener("click", () => toggleSaved(film.id, listButton));
+      meta.append(listButton);
+      article.append(meta);
+      return article;
+    }
+
+    function makeAlbumCard(album) {
+      const article = makeElement("article", "album-card");
+      const openButton = makeElement("button", "album-art-button");
+      openButton.type = "button";
+      openButton.setAttribute("aria-label", `Open tracks for ${album.title}, by ${album.artist}`);
+      const image = makeElement("img", "album-art-image");
+      image.src = album.cover;
+      image.alt = album.alt;
+      image.loading = "lazy";
+      image.decoding = "async";
+      openButton.append(image, makeElement("span", "album-art-label", "Sample album"));
+      openButton.addEventListener("click", () => openAlbumTracks(album.id));
+      article.append(openButton);
+
+      const meta = makeElement("div", "audio-card-meta");
+      const title = makeElement("button", "audio-card-title", album.title);
+      title.type = "button";
+      title.setAttribute("aria-label", `Open tracks for ${album.title}, by ${album.artist}`);
+      title.addEventListener("click", () => openAlbumTracks(album.id));
+      meta.append(title);
+      meta.append(makeElement("p", "audio-card-submeta", album.artist));
+      meta.append(makeElement("p", "audio-card-detail", `${album.year} · ${album.genre} · ${album.trackIds.length} track${album.trackIds.length === 1 ? "" : "s"}`));
+      article.append(meta);
+      return article;
+    }
+
+    function makeArtistCard(artist) {
+      const album = audioAlbums.find((item) => item.artistId === artist.id);
+      const artistTracks = audioTracks.filter((track) => track.artistId === artist.id);
+      const article = makeElement("article", "artist-card");
+      const openButton = makeElement("button", "artist-art-button");
+      openButton.type = "button";
+      openButton.setAttribute("aria-label", `Open tracks by ${artist.name}`);
+      const image = makeElement("img", "artist-art-image");
+      image.src = album.cover;
+      image.alt = album.alt;
+      image.loading = "lazy";
+      image.decoding = "async";
+      openButton.append(image, makeElement("span", "artist-art-label", "Sample artist"));
+      openButton.addEventListener("click", () => openArtistTracks(artist.id));
+      article.append(openButton);
+
+      const meta = makeElement("div", "audio-card-meta");
+      const title = makeElement("button", "audio-card-title", artist.name);
+      title.type = "button";
+      title.setAttribute("aria-label", `Open tracks by ${artist.name}`);
+      title.addEventListener("click", () => openArtistTracks(artist.id));
+      meta.append(title);
+      meta.append(makeElement("p", "audio-card-submeta", `${artist.albumIds.length} sample album${artist.albumIds.length === 1 ? "" : "s"}`));
+      meta.append(makeElement("p", "audio-card-detail", `${artistTracks.length} track${artistTracks.length === 1 ? "" : "s"} · ${album.genre}`));
+      article.append(meta);
+      return article;
+    }
+
+    function makeGenreCard(genre) {
+      const albumCount = audioAlbums.filter((album) => album.genre === genre.name).length;
+      const trackCount = audioTracks.filter((track) => track.genre === genre.name).length;
+      const article = makeElement("article", "genre-card");
+      const copy = makeElement("div", "");
+      copy.append(makeElement("h3", "", genre.name));
+      copy.append(makeElement("p", "", `${albumCount} sample album${albumCount === 1 ? "" : "s"} · ${trackCount} track${trackCount === 1 ? "" : "s"}`));
+      const browseButton = makeElement("button", "", "Browse albums");
+      browseButton.type = "button";
+      browseButton.addEventListener("click", () => {
+        state.musicGenre = genre.name;
+        musicGenreSelect.value = genre.name;
+        state.musicView = "albums";
+        state.selectedAlbumId = null;
+        state.selectedArtistId = null;
+        updateMusicTabs();
+        renderMusic();
+        musicResultsHeading.focus({ preventScroll: true });
+      });
+      article.append(copy, browseButton);
+      return article;
+    }
+
+    function makeAudioTrackRow(track) {
+      const album = audioAlbums.find((item) => item.id === track.albumId);
+      const article = makeElement("li", "audio-track-row");
+      article.dataset.trackRow = track.id;
+      const copy = makeElement("div", "track-main");
+      copy.append(makeElement("h3", "track-title", track.title));
+      copy.append(makeElement("p", "track-byline", `${track.artist} · ${album.title}`));
+      const actions = makeElement("div", "track-actions");
+      actions.append(makeElement("span", "track-duration", track.duration));
+      const selectButton = makeElement("button", "track-select", "Select");
+      selectButton.type = "button";
+      selectButton.dataset.selectTrack = track.id;
+      selectButton.setAttribute("aria-label", `Select ${track.title} by ${track.artist} for preview`);
+      selectButton.setAttribute("aria-pressed", String(currentTrack()?.id === track.id));
+      if (currentTrack()?.id === track.id) selectButton.textContent = "Selected";
+      selectButton.addEventListener("click", () => selectAudioTrack(track.id));
+      actions.append(selectButton);
+      article.append(copy, makeElement("p", "track-genre", track.genre), actions);
+      return article;
+    }
+
+    function updateViewControls() {
+      document.querySelectorAll("[data-view]").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.view === state.view));
+      });
+      document.getElementById("saved-count").textContent = String(state.savedIds.size);
+      document.getElementById("all-count").textContent = String(films.length);
+      resultsTitle.textContent = state.view === "my-list" ? "My list" : "All films";
+    }
+
+    function updateLibraryMode() {
+      const isMusic = state.mode === "music";
+      moviesViewRoot.hidden = isMusic;
+      musicViewRoot.hidden = !isMusic;
+      document.querySelectorAll("[data-mode]").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode));
+      });
+      document.querySelectorAll("[data-movie-only]").forEach((element) => {
+        element.hidden = isMusic;
+      });
+    }
+
+    function setLibraryMode(mode) {
+      state.mode = mode === "music" ? "music" : "movies";
+      updateLibraryMode();
+      if (state.mode === "music") renderMusic();
+    }
+
+    function renderFilms() {
+      const shown = visibleFilms(films, state);
+      const fragment = document.createDocumentFragment();
+      shown.forEach((film) => fragment.append(makeCard(film)));
+      filmGrid.replaceChildren(fragment);
+      emptyState.hidden = shown.length !== 0;
+      filmGrid.hidden = shown.length === 0;
+      resultsStatus.textContent = `${shown.length} ${shown.length === 1 ? "film" : "films"}`;
+      if (shown.length === 0 && state.view === "my-list") {
+        document.getElementById("empty-title").textContent = "Your list is empty";
+        document.getElementById("empty-copy").textContent = "Save a film here to keep it close. Your list stays in this preview session.";
+      } else {
+        document.getElementById("empty-title").textContent = "No films found";
+        document.getElementById("empty-copy").textContent = "Try another title or genre, or clear the current filters.";
+      }
+      updateViewControls();
+    }
+
+    function updateMusicTabs() {
+      document.querySelectorAll("[data-music-view]").forEach((tab) => {
+        const selected = tab.dataset.musicView === state.musicView;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected) musicResults.setAttribute("aria-labelledby", tab.id);
+      });
+    }
+
+    function renderMusic() {
+      updateMusicTabs();
+      const options = {
+        query: state.musicQuery,
+        genre: state.musicGenre,
+        sort: state.musicSort,
+        albumId: state.musicView === "tracks" ? state.selectedAlbumId : null,
+        artistId: state.musicView === "tracks" ? state.selectedArtistId : null
+      };
+      const records = visibleAudioRecords(state.musicView, options);
+      const headings = { albums: "Albums", artists: "Artists", tracks: "Tracks", genres: "Genres" };
+      let heading = headings[state.musicView] || "Albums";
+      let noun = state.musicView;
+
+      if (state.musicView === "tracks" && state.selectedAlbumId) {
+        const album = audioAlbums.find((item) => item.id === state.selectedAlbumId);
+        heading = `Tracks · ${album.title}`;
+        musicContextText.textContent = `Sample album by ${album.artist}. Choose a track to set the preview queue.`;
+        musicContext.hidden = false;
+      } else if (state.musicView === "tracks" && state.selectedArtistId) {
+        const artist = audioArtists.find((item) => item.id === state.selectedArtistId);
+        heading = `Tracks · ${artist.name}`;
+        musicContextText.textContent = `Sample tracks by ${artist.name}. Choose a track to set the preview queue.`;
+        musicContext.hidden = false;
+      } else {
+        musicContext.hidden = true;
+      }
+
+      if (state.musicView === "albums") noun = "album";
+      if (state.musicView === "artists") noun = "artist";
+      if (state.musicView === "tracks") noun = "track";
+      if (state.musicView === "genres") noun = "genre";
+      musicResultsHeading.textContent = heading;
+      musicResultsStatus.textContent = `${records.length} ${noun}${records.length === 1 ? "" : "s"}`;
+      musicResults.hidden = false;
+      musicEmptyState.hidden = records.length !== 0;
+      musicResults.replaceChildren();
+      if (records.length === 0) return;
+
+      if (state.musicView === "albums") {
+        const grid = makeElement("div", "album-grid");
+        records.forEach((album) => grid.append(makeAlbumCard(album)));
+        musicResults.append(grid);
+      } else if (state.musicView === "artists") {
+        const grid = makeElement("div", "artist-grid");
+        records.forEach((artist) => grid.append(makeArtistCard(artist)));
+        musicResults.append(grid);
+      } else if (state.musicView === "tracks") {
+        const list = makeElement("ol", "audio-track-list");
+        records.forEach((track) => list.append(makeAudioTrackRow(track)));
+        musicResults.append(list);
+      } else {
+        const grid = makeElement("div", "genre-grid");
+        records.forEach((genre) => grid.append(makeGenreCard(genre)));
+        musicResults.append(grid);
+      }
+    }
+
+    function openAlbumTracks(albumId) {
+      state.musicView = "tracks";
+      state.selectedAlbumId = albumId;
+      state.selectedArtistId = null;
+      updateMusicTabs();
+      renderMusic();
+      musicResultsHeading.focus({ preventScroll: true });
+    }
+
+    function openArtistTracks(artistId) {
+      state.musicView = "tracks";
+      state.selectedAlbumId = null;
+      state.selectedArtistId = artistId;
+      updateMusicTabs();
+      renderMusic();
+      musicResultsHeading.focus({ preventScroll: true });
+    }
+
+    function currentTrack() {
+      const trackId = state.player.queueIds[state.player.queueIndex];
+      return audioTracks.find((track) => track.id === trackId) || null;
+    }
+
+    function updateQueueSelection() {
+      queueList.querySelectorAll("[data-queue-index]").forEach((button) => {
+        button.setAttribute("aria-current", String(Number(button.dataset.queueIndex) === state.player.queueIndex));
+      });
+    }
+
+    function renderQueue() {
+      const fragment = document.createDocumentFragment();
+      state.player.queueIds.forEach((trackId, index) => {
+        const track = audioTracks.find((item) => item.id === trackId);
+        const album = audioAlbums.find((item) => item.id === track.albumId);
+        const item = makeElement("li", "");
+        const button = makeElement("button", "queue-track");
+        button.type = "button";
+        button.dataset.queueIndex = String(index);
+        button.setAttribute("aria-current", String(index === state.player.queueIndex));
+        button.append(makeElement("strong", "", track.title), makeElement("span", "", `${track.artist} · ${album.title} · ${track.duration}`));
+        button.addEventListener("click", () => selectQueueIndex(index));
+        item.append(button);
+        fragment.append(item);
+      });
+      queueList.replaceChildren(fragment);
+      queueCount.textContent = String(state.player.queueIds.length);
+      queueToggle.disabled = state.player.queueIds.length === 0;
+      queuePanel.hidden = !state.player.queueOpen;
+      queueToggle.setAttribute("aria-expanded", String(state.player.queueOpen));
+    }
+
+    function updatePlayer() {
+      const track = currentTrack();
+      if (!track) return;
+      const album = audioAlbums.find((item) => item.id === track.albumId);
+      audioPlayer.hidden = false;
+      document.body.classList.add("has-player");
+      playerTrackTitle.textContent = track.title;
+      playerTrackByline.textContent = `${track.artist} · ${album.title}`;
+      playerFeedback.textContent = state.player.isPlaying
+        ? "Preview state: Playing · visual demo only, with no audio output."
+        : "Preview selected or paused · no audio is loaded. Use Play preview to change the demo state.";
+      togglePreviewButton.textContent = state.player.isPlaying ? "Pause preview" : "Play preview";
+      previousTrackButton.disabled = state.player.queueIndex <= 0;
+      nextTrackButton.disabled = state.player.queueIndex >= state.player.queueIds.length - 1;
+      document.querySelectorAll("[data-select-track]").forEach((button) => {
+        const isCurrent = button.dataset.selectTrack === track.id;
+        button.setAttribute("aria-pressed", String(isCurrent));
+        button.textContent = isCurrent ? "Selected" : "Select";
+        const row = button.closest("[data-track-row]");
+        if (row) row.setAttribute("aria-current", String(isCurrent));
+      });
+      updateQueueSelection();
+    }
+
+    function setPlayerQueue(trackIds, trackId) {
+      const validIds = trackIds.filter((id) => audioTracks.some((track) => track.id === id));
+      const index = validIds.indexOf(trackId);
+      if (index < 0) return;
+      state.player.queueIds = validIds;
+      state.player.queueIndex = index;
+      state.player.isPlaying = false;
+      renderQueue();
+      updatePlayer();
+    }
+
+    function selectAudioTrack(trackId) {
+      const tracks = visibleAudioRecords("tracks", {
+        query: state.musicQuery,
+        genre: state.musicGenre,
+        sort: state.musicSort,
+        albumId: state.selectedAlbumId,
+        artistId: state.selectedArtistId
+      });
+      setPlayerQueue(tracks.map((track) => track.id), trackId);
+    }
+
+    function selectQueueIndex(index, player = state.player) {
+      if (index < 0 || index >= player.queueIds.length) return false;
+      player.queueIndex = index;
+      if (player === state.player) updatePlayer();
+      return true;
+    }
+
+    function moveQueue(delta, player = state.player) {
+      const trigger = delta < 0 ? previousTrackButton : nextTrackButton;
+      const hadFocus = player === state.player && document.activeElement === trigger;
+      const nextIndex = queueStepIndex(player.queueIndex, delta, player.queueIds.length);
+      if (nextIndex === player.queueIndex || !selectQueueIndex(nextIndex, player)) return false;
+      if (hadFocus && trigger.disabled) togglePreviewButton.focus({ preventScroll: true });
+      return true;
+    }
+
+    function setDialogFilm(film) {
+      selectedFilmId = film.id;
+      dialogImage.src = film.image;
+      dialogImage.alt = film.alt;
+      document.getElementById("dialog-poster-caption").textContent = film.title;
+      dialogTitle.textContent = film.title;
+      dialogKicker.textContent = film.genres.join(" · ");
+      dialogMeta.textContent = `${film.year} · ${film.runtime}`;
+      dialogSummary.textContent = film.synopsis;
+      dialogCredits.textContent = film.director;
+      const saved = state.savedIds.has(film.id);
+      dialogListToggle.textContent = saved ? "In My List" : "Add to My List";
+      dialogListToggle.setAttribute("aria-pressed", String(saved));
+      dialogFeedback.hidden = true;
+      dialogFeedback.textContent = "Preview only. Playback will connect in the app.";
+    }
+
+    function openDetails(film, opener) {
+      returnFocusId = film.id;
+      returnFocusNode = opener;
+      setDialogFilm(film);
+      dialog.showModal();
+    }
+
+    function canReceiveFocus(element) {
+      return Boolean(element?.isConnected && !element.disabled && element.getClientRects().length > 0);
+    }
+
+    function toggleSaved(id, opener) {
+      if (state.savedIds.has(id)) state.savedIds.delete(id);
+      else state.savedIds.add(id);
+      renderFilms();
+      if (selectedFilmId === id && dialog.open) setDialogFilm(films.find((film) => film.id === id));
+      if (opener && !dialog.open) {
+        const replacement = filmGrid.querySelector(`[data-list-id="${id}"]`);
+        const visibleMyList = [...document.querySelectorAll('[data-view="my-list"]')].find(canReceiveFocus);
+        const target = canReceiveFocus(replacement) ? replacement : visibleMyList || searchInput;
+        target?.focus({ preventScroll: true });
+      }
+    }
+
+    document.querySelectorAll("[data-mode]").forEach((button) => {
+      button.addEventListener("click", () => setLibraryMode(button.dataset.mode));
+    });
+
+    document.querySelectorAll("[data-music-view]").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        state.musicView = tab.dataset.musicView;
+        state.selectedAlbumId = null;
+        state.selectedArtistId = null;
+        updateMusicTabs();
+        renderMusic();
+      });
+      tab.addEventListener("keydown", (event) => {
+        const tabs = [...document.querySelectorAll("[data-music-view]")];
+        const index = tabs.indexOf(tab);
+        let nextIndex = index;
+        if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") nextIndex = 0;
+        else if (event.key === "End") nextIndex = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        tabs[nextIndex].focus();
+        tabs[nextIndex].click();
+      });
+    });
+
+    musicSearch.addEventListener("input", () => {
+      state.musicQuery = musicSearch.value;
+      renderMusic();
+    });
+
+    musicGenreSelect.addEventListener("change", () => {
+      state.musicGenre = musicGenreSelect.value;
+      renderMusic();
+    });
+
+    musicSortSelect.addEventListener("change", () => {
+      state.musicSort = musicSortSelect.value;
+      renderMusic();
+    });
+
+    document.getElementById("clear-music-filters").addEventListener("click", () => {
+      state.musicQuery = "";
+      state.musicGenre = "all";
+      state.selectedAlbumId = null;
+      state.selectedArtistId = null;
+      musicSearch.value = "";
+      musicGenreSelect.value = "all";
+      renderMusic();
+      musicSearch.focus();
+    });
+
+    document.getElementById("clear-music-context").addEventListener("click", () => {
+      state.selectedAlbumId = null;
+      state.selectedArtistId = null;
+      renderMusic();
+      musicResultsHeading.focus({ preventScroll: true });
+    });
+
+    document.querySelectorAll("[data-view]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.view = button.dataset.view;
+        renderFilms();
+      });
+    });
+
+    document.querySelectorAll("[data-genre]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.genre = button.dataset.genre;
+        document.querySelectorAll("[data-genre]").forEach((chip) => chip.setAttribute("aria-pressed", String(chip === button)));
+        renderFilms();
+      });
+    });
+
+    searchInput.addEventListener("input", () => {
+      state.query = searchInput.value;
+      renderFilms();
+    });
+
+    sortSelect.addEventListener("change", () => {
+      state.sort = sortSelect.value;
+      renderFilms();
+    });
+
+    document.getElementById("clear-filters").addEventListener("click", () => {
+      state.query = "";
+      state.genre = "all";
+      state.view = "all";
+      searchInput.value = "";
+      document.querySelectorAll("[data-genre]").forEach((chip) => chip.setAttribute("aria-pressed", String(chip.dataset.genre === "all")));
+      renderFilms();
+      searchInput.focus();
+    });
+
+    document.getElementById("dialog-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("close", () => {
+      const matchingCard = returnFocusId && filmGrid.querySelector(`[data-open-id="${returnFocusId}"]`);
+      const mobileAllFilms = document.querySelector(".mobile-nav [data-view='all']");
+      const desktopAllFilms = document.querySelector(".sidebar .local-view[data-view='all']");
+      const focusTarget = [returnFocusNode, matchingCard, searchInput, mobileAllFilms, desktopAllFilms]
+        .find(canReceiveFocus);
+      focusTarget?.focus({ preventScroll: true });
+      selectedFilmId = null;
+      returnFocusNode = null;
+      returnFocusId = null;
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    dialogListToggle.addEventListener("click", () => {
+      if (selectedFilmId) toggleSaved(selectedFilmId);
+    });
+
+    document.getElementById("play-film").addEventListener("click", () => {
+      dialogFeedback.hidden = false;
+    });
+
+    previousTrackButton.addEventListener("click", () => moveQueue(-1));
+    nextTrackButton.addEventListener("click", () => moveQueue(1));
+    togglePreviewButton.addEventListener("click", () => {
+      state.player.isPlaying = !state.player.isPlaying;
+      updatePlayer();
+    });
+    queueToggle.addEventListener("click", () => {
+      state.player.queueOpen = !state.player.queueOpen;
+      renderQueue();
+    });
+
+    window.previewSelfCheck = function previewSelfCheck() {
+      let checks = 0;
+      const assert = (condition, message) => {
+        if (!condition) throw new Error(`Archive preview check failed: ${message}`);
+        checks += 1;
+      };
+      const base = { query: "", genre: "all", view: "all", sort: "added", savedIds: new Set() };
+      assert(visibleFilms(films, base).length === 6, "all films are present");
+      assert(visibleFilms(films, { ...base, genre: "Drama" }).length === 6, "genre filter uses film metadata");
+      assert(visibleFilms(films, { ...base, query: "signal" })[0]?.id === "quiet-universe", "search includes synopsis metadata");
+      assert(visibleFilms(films, { ...base, query: "2024" })[0]?.id === "long-way-home", "search includes release year");
+      const alphabetical = visibleFilms(films, { ...base, sort: "title" });
+      assert(alphabetical[0].title === "A Quiet Universe" && alphabetical.at(-1).title === "Where the Road Ends", "title sorting is alphabetical");
+      const byYear = visibleFilms(films, { ...base, sort: "year-desc" });
+      assert(byYear[0].year === 2025 && byYear.at(-1).year === 2020, "year sorting uses numeric metadata");
+      assert(visibleFilms(films, { ...base, view: "my-list", savedIds: new Set(["blue-between", "green-distance"]) }).length === 2, "My List filters by saved IDs");
+
+      const audioBase = { query: "", genre: "all", sort: "recent" };
+      const albumsByTitle = visibleAudioRecords("albums", { ...audioBase, sort: "title" });
+      assert(visibleAudioRecords("albums", audioBase).length === 6, "six sample albums are present");
+      assert(albumsByTitle[0].title === "A Little Further" && albumsByTitle.at(-1).title === "The Quiet Hours", "album sorting uses title metadata");
+      assert(visibleAudioRecords("albums", { ...audioBase, query: "A Little Further" })[0]?.id === "album-a-little-further", "album search finds sample titles");
+      assert(visibleAudioRecords("artists", { ...audioBase, query: "Open Road" })[0]?.id === "ellis-ward", "artist search includes album and track metadata");
+      assert(visibleAudioRecords("albums", { ...audioBase, genre: "Acoustic" })[0]?.id === "album-almost-home", "audio genre filtering uses album metadata");
+      assert(visibleAudioRecords("tracks", { ...audioBase, albumId: "album-first-light" }).map((track) => track.id).join(",") === "track-first-light", "album selection opens its tracks");
+      assert(visibleAudioRecords("tracks", { ...audioBase, query: "Last Light" }).some((track) => track.id === "track-last-light"), "track search includes album metadata");
+      assert(visibleAudioRecords("genres", audioBase).length === 6, "genre view lists sample genres");
+      assert(queueStepIndex(0, -1, 3) === 0 && queueStepIndex(0, 1, 3) === 1 && queueStepIndex(2, 1, 3) === 2 && queueStepIndex(1, -1, 3) === 0, "queue previous and next stay within bounds");
+      const playingQueue = { queueIds: ["one", "two", "three"], queueIndex: 0, isPlaying: true };
+      assert(moveQueue(1, playingQueue) && moveQueue(-1, playingQueue) && selectQueueIndex(2, playingQueue) && playingQueue.queueIndex === 2 && playingQueue.isPlaying, "queue next, previous and selection preserve active preview state");
+      const pausedQueue = { queueIds: ["one", "two", "three"], queueIndex: 1, isPlaying: false };
+      assert(moveQueue(1, pausedQueue) && moveQueue(-1, pausedQueue) && selectQueueIndex(2, pausedQueue) && pausedQueue.queueIndex === 2 && !pausedQueue.isPlaying, "queue next, previous and selection preserve paused state");
+      assert(initialLibraryMode("#music") === "music" && initialLibraryMode("") === "movies", "direct music links preserve the Movies default");
+      return { ok: true, checks, audioAlbums: audioAlbums.length, audioTracks: audioTracks.length };
+    };
+
+    renderFilms();
+    updateLibraryMode();
+    updateMusicTabs();
+    renderMusic();
+  </script>
+</body>
+</html>

@@ -1,0 +1,772 @@
+{
+  "reference_repository": "benclawbot/VLC-Premiere",
+  "reference_commit": "5a919454a41f5c490b90e2016437ff77be859da3",
+  "reference_path": "design-proposals/premiere/coverage.json",
+  "screen_count": 109,
+  "status": "Planning dispositions only; no desktop feature is implemented by this inventory.",
+  "screens": [
+    {
+      "id": "video-library",
+      "category": "Video",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "video-list",
+      "category": "Video",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "video-groups",
+      "category": "Video",
+      "disposition": "adapted",
+      "task": "T10",
+      "note": "Initial grouping is by local series/season; arbitrary manual groups are follow-on scope."
+    },
+    {
+      "id": "group-detail",
+      "category": "Video",
+      "disposition": "adapted",
+      "task": "T10",
+      "note": "Initial grouping is by local series/season; arbitrary manual groups are follow-on scope."
+    },
+    {
+      "id": "video-selection",
+      "category": "Video",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "media-details",
+      "category": "Video",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "search",
+      "category": "Video",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "video-empty",
+      "category": "Video",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-artists",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-albums",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-tracks",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-genres",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "artist-detail",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "album-detail",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "genre-detail",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-player",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T13",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-queue",
+      "category": "Audio",
+      "disposition": "planned",
+      "task": "T09",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-bookmarks",
+      "category": "Audio",
+      "disposition": "deferred",
+      "task": "P01",
+      "note": "Advanced playback follow-on; not claimed as initial desktop parity."
+    },
+    {
+      "id": "browse",
+      "category": "Browse",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "folder",
+      "category": "Browse",
+      "disposition": "planned",
+      "task": "T08",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "scan-folders",
+      "category": "Browse",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "network",
+      "category": "Browse",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "network-share",
+      "category": "Browse",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "connect-server",
+      "category": "Browse",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "stream",
+      "category": "Browse",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "stream-history",
+      "category": "Browse",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "file-picker",
+      "category": "Browse",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "playlists",
+      "category": "Playlists",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "playlist-detail",
+      "category": "Playlists",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "playlist-edit",
+      "category": "Playlists",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "playlist-empty",
+      "category": "Playlists",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "video-player",
+      "category": "Playback",
+      "disposition": "adapted",
+      "task": "T07",
+      "note": "One resizable desktop player replaces separate phone orientation layouts."
+    },
+    {
+      "id": "portrait-player",
+      "category": "Playback",
+      "disposition": "adapted",
+      "task": "T07",
+      "note": "One resizable desktop player replaces separate phone orientation layouts."
+    },
+    {
+      "id": "playback-options",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-track-picker",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "subtitle-tracks",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "subtitle-download",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "subtitle-results",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "playback-speed",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "sync",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "jump-time",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "chapters",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "bookmarks",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P01",
+      "note": "Advanced playback follow-on; not claimed as initial desktop parity."
+    },
+    {
+      "id": "sleep-timer",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P01",
+      "note": "Advanced playback follow-on; not claimed as initial desktop parity."
+    },
+    {
+      "id": "equalizer",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P01",
+      "note": "Advanced playback follow-on; not claimed as initial desktop parity."
+    },
+    {
+      "id": "cast-devices",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "popup-player",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P04",
+      "note": "Platform-specific desktop integration requires per-OS evidence."
+    },
+    {
+      "id": "brightness",
+      "category": "Playback",
+      "disposition": "android-only",
+      "task": null,
+      "note": "Android-specific system surface or gesture; not copied into desktop UI."
+    },
+    {
+      "id": "volume",
+      "category": "Playback",
+      "disposition": "adapted",
+      "task": "T05",
+      "note": "Desktop volume control replaces the phone gesture."
+    },
+    {
+      "id": "locked-player",
+      "category": "Playback",
+      "disposition": "android-only",
+      "task": null,
+      "note": "Android-specific system surface or gesture; not copied into desktop UI."
+    },
+    {
+      "id": "ab-repeat",
+      "category": "Playback",
+      "disposition": "deferred",
+      "task": "P01",
+      "note": "Advanced playback follow-on; not claimed as initial desktop parity."
+    },
+    {
+      "id": "video-size",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "playback-info",
+      "category": "Playback",
+      "disposition": "planned",
+      "task": "T15",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "more",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "history",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T12",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "settings",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "interface-settings",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "video-settings",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "video-controls",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-settings",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "audio-controls",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "subtitle-settings",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "casting-settings",
+      "category": "More & settings",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "remote-settings",
+      "category": "More & settings",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "android-auto",
+      "category": "More & settings",
+      "disposition": "android-only",
+      "task": null,
+      "note": "Android-specific system surface or gesture; not copied into desktop UI."
+    },
+    {
+      "id": "advanced",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "optional",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "parental",
+      "category": "More & settings",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "pin",
+      "category": "More & settings",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "settings-search",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "equalizer-presets",
+      "category": "More & settings",
+      "disposition": "deferred",
+      "task": "P01",
+      "note": "Advanced playback follow-on; not claimed as initial desktop parity."
+    },
+    {
+      "id": "permissions",
+      "category": "More & settings",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "widgets",
+      "category": "More & settings",
+      "disposition": "android-only",
+      "task": null,
+      "note": "Android-specific system surface or gesture; not copied into desktop UI."
+    },
+    {
+      "id": "about",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "licenses",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "authors",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "feedback",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "debug-logs",
+      "category": "More & settings",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "welcome",
+      "category": "First run",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "theme",
+      "category": "First run",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "media-permission",
+      "category": "First run",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "first-scan",
+      "category": "First run",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "notifications",
+      "category": "First run",
+      "disposition": "deferred",
+      "task": "P04",
+      "note": "Platform-specific desktop integration requires per-OS evidence."
+    },
+    {
+      "id": "no-permission",
+      "category": "First run",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "remote-welcome",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "remote-control",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "remote-content",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "remote-encryption",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "remote-auth",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "remote-code",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "remote-status",
+      "category": "Remote pairing",
+      "disposition": "deferred",
+      "task": "P03",
+      "note": "Remote access or parental controls require a separate threat model and requirements."
+    },
+    {
+      "id": "media-actions",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "display-options",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "add-playlist",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "create-playlist",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "add-group",
+      "category": "Dialogs",
+      "disposition": "adapted",
+      "task": "T10",
+      "note": "Initial grouping is by local series/season; arbitrary manual groups are follow-on scope."
+    },
+    {
+      "id": "rename",
+      "category": "Dialogs",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Library/display metadata or playlist objects only; source media is never renamed or deleted."
+    },
+    {
+      "id": "delete",
+      "category": "Dialogs",
+      "disposition": "adapted",
+      "task": "T14",
+      "note": "Library/display metadata or playlist objects only; source media is never renamed or deleted."
+    },
+    {
+      "id": "duplicate",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T14",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "network-login",
+      "category": "Dialogs",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "connection-error",
+      "category": "Dialogs",
+      "disposition": "deferred",
+      "task": "P02",
+      "note": "Network protocols/providers/casting are follow-on scope with native service tests."
+    },
+    {
+      "id": "external-storage",
+      "category": "Dialogs",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Desktop folder/file selection and access errors replace Android permission APIs."
+    },
+    {
+      "id": "notification-permission",
+      "category": "Dialogs",
+      "disposition": "android-only",
+      "task": null,
+      "note": "Android-specific system surface or gesture; not copied into desktop UI."
+    },
+    {
+      "id": "replace-queue",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T09",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "resume-video",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T12",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "whats-new",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "license-detail",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "feature-warning",
+      "category": "Dialogs",
+      "disposition": "planned",
+      "task": "T17",
+      "note": "Desktop equivalent; exact composition follows the selected proposal."
+    },
+    {
+      "id": "progress",
+      "category": "Dialogs",
+      "disposition": "adapted",
+      "task": "T08",
+      "note": "Local scan progress is initial scope; network connection progress belongs to P02."
+    }
+  ]
+}

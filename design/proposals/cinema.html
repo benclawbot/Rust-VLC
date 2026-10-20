@@ -1,0 +1,1275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#141312">
+  <title>Cinema · VLC Première</title>
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="../assets/golden-hour.jpg" as="image">
+  <style>
+    @font-face {
+      font-family: "Inter";
+      src: url("../assets/InterVariable.woff2") format("woff2");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: dark;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      --ink: #141312;
+      --ivory: #e7ddcc;
+      --muted: #aaa196;
+      --orange: #f46b32;
+      --line: #3b3631;
+      --panel: #211e1b;
+      --gutter: clamp(24px, 5.1vw, 78px);
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      scroll-behavior: smooth;
+      background: var(--ink);
+    }
+
+    body {
+      min-width: 320px;
+      margin: 0;
+      overflow-x: clip;
+      background: var(--ink);
+      color: var(--ivory);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button,
+    a {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--orange);
+      outline-offset: 4px;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .skip-link {
+      position: fixed;
+      z-index: 10;
+      top: 12px;
+      left: 12px;
+      transform: translateY(-160%);
+      border-radius: 8px;
+      padding: 9px 13px;
+      background: var(--ivory);
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .site-header {
+      position: absolute;
+      z-index: 3;
+      inset: 0 0 auto;
+      display: flex;
+      min-height: 76px;
+      align-items: center;
+      gap: clamp(14px, 2vw, 30px);
+      padding: 0 var(--gutter);
+      background: linear-gradient(180deg, rgb(20 19 18 / 88%), rgb(20 19 18 / 40%) 72%, transparent);
+    }
+
+    .wordmark {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: baseline;
+      gap: 9px;
+      white-space: nowrap;
+    }
+
+    .wordmark-main {
+      color: var(--orange);
+      font-size: 20px;
+      font-weight: 850;
+      letter-spacing: -0.075em;
+      text-transform: uppercase;
+    }
+
+    .wordmark-product {
+      color: var(--ivory);
+      font-size: 14px;
+      font-weight: 650;
+      letter-spacing: -0.035em;
+    }
+
+    .main-nav {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: clamp(14px, 2vw, 28px);
+    }
+
+    .main-nav a {
+      position: relative;
+      padding: 8px 0;
+      color: rgb(231 221 204 / 72%);
+      font-size: 13px;
+      font-weight: 560;
+      white-space: nowrap;
+      transition: color 160ms ease;
+    }
+
+    .main-nav a:hover,
+    .main-nav a[aria-current="page"] {
+      color: var(--ivory);
+    }
+
+    .main-nav a[aria-current="page"]::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      background: var(--orange);
+      content: "";
+    }
+
+    .header-actions {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+    }
+
+    .search-control {
+      display: flex;
+      width: clamp(150px, 17vw, 238px);
+      min-width: 0;
+    }
+
+    .search-control input {
+      width: 100%;
+      min-width: 0;
+      height: 40px;
+      border: 1px solid rgb(231 221 204 / 24%);
+      border-radius: 8px;
+      padding: 0 12px;
+      background: rgb(20 19 18 / 70%);
+      color: var(--ivory);
+      font-size: 13px;
+    }
+
+    .search-control input::placeholder {
+      color: #c4b9a8;
+      opacity: 0.78;
+    }
+
+    .list-toggle,
+    .scroll-control,
+    .button {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border: 1px solid rgb(231 221 204 / 35%);
+      border-radius: 8px;
+      padding: 0 14px;
+      background: rgb(20 19 18 / 48%);
+      color: var(--ivory);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 660;
+      white-space: nowrap;
+      transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+
+    .list-toggle:hover,
+    .scroll-control:hover,
+    .button-secondary:hover {
+      border-color: rgb(231 221 204 / 68%);
+      background: rgb(33 30 27 / 90%);
+    }
+
+    .list-toggle[aria-pressed="true"] {
+      border-color: var(--orange);
+      background: rgb(244 107 50 / 14%);
+      color: var(--ivory);
+    }
+
+    .list-count {
+      display: inline-grid;
+      min-width: 19px;
+      height: 19px;
+      place-items: center;
+      border-radius: 99px;
+      background: var(--orange);
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .hero {
+      position: relative;
+      isolation: isolate;
+      height: clamp(470px, 55vw, 650px);
+      min-height: 470px;
+      overflow: hidden;
+      background: #28231e;
+    }
+
+    .hero-image {
+      position: absolute;
+      z-index: -2;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: 56% 43%;
+      animation: reveal-image 850ms ease-out both;
+    }
+
+    .hero::before {
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgb(20 19 18 / 94%) 0%, rgb(20 19 18 / 82%) 28%, rgb(20 19 18 / 40%) 57%, rgb(20 19 18 / 8%) 100%),
+        linear-gradient(0deg, var(--ink) 0%, rgb(20 19 18 / 88%) 9%, rgb(20 19 18 / 18%) 52%, transparent 100%),
+        linear-gradient(180deg, rgb(20 19 18 / 48%), transparent 34%);
+      content: "";
+    }
+
+    .hero-content {
+      position: absolute;
+      right: var(--gutter);
+      bottom: 72px;
+      left: var(--gutter);
+      max-width: 720px;
+      animation: rise-in 620ms 100ms ease-out both;
+    }
+
+    .sample-label,
+    .hero-kicker,
+    .shelf-kicker,
+    .dialog-kicker {
+      margin: 0;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 730;
+      letter-spacing: 0.13em;
+      line-height: 1.4;
+      text-transform: uppercase;
+    }
+
+    .sample-label {
+      margin-bottom: 21px;
+      color: var(--ivory);
+      letter-spacing: 0.095em;
+    }
+
+    .sample-label span {
+      margin: 0 5px;
+      color: var(--orange);
+    }
+
+    .hero-kicker {
+      margin-bottom: 12px;
+      color: #f1a27c;
+      letter-spacing: 0.14em;
+    }
+
+    .hero h1 {
+      max-width: 720px;
+      margin: 0;
+      color: var(--ivory);
+      font-size: clamp(42px, 5.2vw, 74px);
+      font-weight: 780;
+      letter-spacing: -0.04em;
+      line-height: 0.98;
+      text-wrap: balance;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 11px;
+      margin: 19px 0 0;
+      color: #d1c5b4;
+      font-size: 13px;
+      font-weight: 570;
+    }
+
+    .hero-meta .meta-separator {
+      color: var(--orange);
+      font-size: 15px;
+    }
+
+    .hero-description {
+      max-width: 480px;
+      margin: 13px 0 0;
+      color: rgb(231 221 204 / 82%);
+      font-size: 15px;
+      line-height: 1.62;
+      text-wrap: pretty;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .button {
+      min-height: 44px;
+      padding: 0 19px;
+      font-size: 14px;
+    }
+
+    .button-primary {
+      border-color: var(--orange);
+      background: var(--orange);
+      color: var(--ink);
+    }
+
+    .button-primary:hover {
+      border-color: #ff8758;
+      background: #ff8758;
+    }
+
+    .button-secondary {
+      border-color: rgb(231 221 204 / 36%);
+      background: rgb(20 19 18 / 60%);
+    }
+
+    .hero-resume-note {
+      margin: 13px 0 0;
+      color: rgb(231 221 204 / 68%);
+      font-size: 11px;
+      font-weight: 540;
+    }
+
+    .library {
+      width: min(100%, 1480px);
+      min-width: 0;
+      margin: 0 auto;
+      padding: 0 var(--gutter) 90px;
+    }
+
+    .shelf {
+      min-width: 0;
+      margin-top: 28px;
+    }
+
+    .shelf + .shelf {
+      margin-top: 58px;
+    }
+
+    .shelf-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 15px;
+    }
+
+    .shelf-heading h2 {
+      margin: 4px 0 0;
+      color: var(--ivory);
+      font-size: clamp(21px, 2vw, 26px);
+      font-weight: 710;
+      letter-spacing: -0.055em;
+      line-height: 1.15;
+    }
+
+    .shelf-kicker {
+      color: #d17a51;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+    }
+
+    .shelf-controls {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 7px;
+    }
+
+    .scroll-control {
+      min-height: 34px;
+      padding: 0 11px;
+      border-color: var(--line);
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .shelf-track {
+      display: flex;
+      max-width: 100%;
+      min-width: 0;
+      gap: 18px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 2px 2px 12px;
+      scroll-padding-inline: 2px;
+      scroll-snap-type: x mandatory;
+      scrollbar-color: var(--line) transparent;
+      scrollbar-width: thin;
+    }
+
+    .film-card {
+      flex: 0 0 auto;
+      min-width: 0;
+      scroll-snap-align: start;
+    }
+
+    .landscape-card {
+      display: flex;
+      width: clamp(300px, 32vw, 420px);
+      flex-direction: column;
+      gap: 11px;
+      border: 0;
+      border-radius: var(--radius);
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .landscape-art {
+      position: relative;
+      display: block;
+      aspect-ratio: 1.78;
+      overflow: hidden;
+      border: 1px solid rgb(231 221 204 / 12%);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+
+    .landscape-art::after {
+      position: absolute;
+      inset: 40% 0 0;
+      background: linear-gradient(0deg, rgb(20 19 18 / 52%), transparent);
+      content: "";
+      pointer-events: none;
+    }
+
+    .landscape-art img,
+    .poster-art img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 340ms cubic-bezier(.2, .75, .25, 1);
+    }
+
+    .landscape-card:hover .landscape-art img,
+    .poster-card:hover .poster-art img {
+      transform: scale(1.035);
+    }
+
+    .landscape-status {
+      position: absolute;
+      z-index: 1;
+      top: 12px;
+      left: 13px;
+      color: white;
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: 0.11em;
+      text-shadow: 0 1px 12px rgb(0 0 0 / 65%);
+      text-transform: uppercase;
+    }
+
+    .progress-track {
+      position: absolute;
+      z-index: 1;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 3px;
+      background: rgb(231 221 204 / 35%);
+    }
+
+    .progress-track span {
+      display: block;
+      width: var(--progress);
+      height: 100%;
+      background: var(--orange);
+    }
+
+    .landscape-caption {
+      display: flex;
+      min-width: 0;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .landscape-caption strong,
+    .poster-caption strong {
+      display: block;
+      overflow: hidden;
+      color: var(--ivory);
+      font-size: 14px;
+      font-weight: 670;
+      letter-spacing: -0.025em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .landscape-caption small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 520;
+    }
+
+    .remaining-time {
+      flex: 0 0 auto;
+      color: #c5b9a8;
+      font-size: 10px;
+      font-weight: 580;
+      white-space: nowrap;
+    }
+
+    .poster-card {
+      display: block;
+      width: clamp(168px, 16vw, 212px);
+      aspect-ratio: 0.7;
+      overflow: hidden;
+      border: 1px solid rgb(231 221 204 / 13%);
+      border-radius: var(--radius);
+      padding: 0;
+      background: var(--panel);
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .poster-art {
+      position: relative;
+      display: block;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #28231e;
+    }
+
+    .poster-art::after {
+      position: absolute;
+      inset: 26% 0 0;
+      background: linear-gradient(0deg, rgb(20 19 18 / 93%), rgb(20 19 18 / 42%) 44%, transparent);
+      content: "";
+    }
+
+    .poster-caption {
+      position: absolute;
+      z-index: 1;
+      right: 12px;
+      bottom: 13px;
+      left: 12px;
+    }
+
+    .poster-caption strong {
+      overflow: visible;
+      text-wrap: balance;
+      white-space: normal;
+    }
+
+    .poster-caption small {
+      display: block;
+      margin-top: 5px;
+      color: #d1c5b4;
+      font-size: 10px;
+      font-weight: 550;
+    }
+
+    .shelf-empty {
+      margin: 0;
+      padding: 15px 2px 21px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      clip-path: inset(50%);
+    }
+
+    .film-dialog {
+      width: min(920px, calc(100% - 32px));
+      max-width: 920px;
+      max-height: min(680px, calc(100% - 40px));
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 0;
+      background: var(--panel);
+      color: var(--ivory);
+      box-shadow: 0 28px 90px rgb(0 0 0 / 54%);
+    }
+
+    .film-dialog::backdrop {
+      background: rgb(8 7 6 / 78%);
+      backdrop-filter: blur(7px);
+    }
+
+    .dialog-layout {
+      display: grid;
+      min-height: 420px;
+      grid-template-columns: minmax(260px, 0.9fr) minmax(340px, 1.1fr);
+    }
+
+    .dialog-art {
+      min-height: 420px;
+      overflow: hidden;
+      background: #2a2520;
+    }
+
+    .dialog-art img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 420px;
+      object-fit: cover;
+    }
+
+    .dialog-content {
+      position: relative;
+      align-self: center;
+      padding: 44px 38px 36px;
+    }
+
+    .dialog-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 12px;
+      background: transparent;
+      color: var(--ivory);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 620;
+    }
+
+    .dialog-kicker {
+      margin-bottom: 10px;
+      color: #d17a51;
+    }
+
+    .dialog-content h2 {
+      margin: 0;
+      font-size: clamp(29px, 4vw, 42px);
+      font-weight: 740;
+      letter-spacing: -0.065em;
+      line-height: 1.03;
+      text-wrap: balance;
+    }
+
+    .dialog-meta {
+      margin: 14px 0 0;
+      color: #c5b9a8;
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .dialog-description {
+      margin: 17px 0 0;
+      color: #d2c8ba;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .dialog-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 24px;
+    }
+
+    .dialog-status {
+      min-height: 22px;
+      margin: 14px 0 0;
+      color: var(--ivory);
+      font-size: 12px;
+    }
+
+    .dialog-footnote {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    @keyframes reveal-image {
+      from { opacity: 0.6; transform: scale(1.018); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes rise-in {
+      from { opacity: 0; transform: translateY(11px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 740px) {
+      .site-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px 16px;
+        padding-top: 14px;
+      }
+
+      .wordmark {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      .wordmark-product {
+        display: none;
+      }
+
+      .header-actions {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .search-control {
+        width: min(39vw, 190px);
+      }
+
+      .search-control input {
+        height: 37px;
+      }
+
+      .list-toggle {
+        min-height: 37px;
+        padding-inline: 10px;
+      }
+
+      .main-nav {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        gap: 21px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .main-nav::-webkit-scrollbar {
+        display: none;
+      }
+
+      .hero {
+        height: clamp(560px, 76svh, 650px);
+        min-height: 560px;
+      }
+
+      .hero::before {
+        background:
+          linear-gradient(90deg, rgb(20 19 18 / 84%) 0%, rgb(20 19 18 / 42%) 100%),
+          linear-gradient(0deg, var(--ink) 0%, rgb(20 19 18 / 92%) 12%, rgb(20 19 18 / 30%) 66%, rgb(20 19 18 / 35%) 100%);
+      }
+
+      .hero-content {
+        bottom: 52px;
+        max-width: 620px;
+      }
+
+      .hero h1 {
+        max-width: 560px;
+        font-size: clamp(40px, 10vw, 59px);
+      }
+
+      .hero-description {
+        max-width: 430px;
+        font-size: 14px;
+      }
+
+      .shelf + .shelf {
+        margin-top: 43px;
+      }
+
+      .dialog-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .dialog-art,
+      .dialog-art img {
+        min-height: 0;
+        height: 240px;
+      }
+
+      .dialog-content {
+        padding: 30px 25px 26px;
+      }
+    }
+
+    @media (max-width: 440px) {
+      :root {
+        --gutter: 20px;
+      }
+
+      .site-header {
+        column-gap: 10px;
+      }
+
+      .search-control {
+        width: min(37vw, 160px);
+      }
+
+      .search-control input {
+        padding-inline: 9px;
+        font-size: 12px;
+      }
+
+      .list-toggle {
+        gap: 6px;
+        padding-inline: 8px;
+        font-size: 12px;
+      }
+
+      .list-count {
+        min-width: 17px;
+        height: 17px;
+        font-size: 10px;
+      }
+
+      .hero {
+        height: 620px;
+      }
+
+      .hero-content {
+        bottom: 44px;
+      }
+
+      .hero h1 {
+        font-size: clamp(39px, 11vw, 48px);
+      }
+
+      .hero-description {
+        font-size: 13px;
+      }
+
+      .shelf-heading {
+        align-items: center;
+      }
+
+      .shelf-heading h2 {
+        font-size: 20px;
+      }
+
+      .scroll-control {
+        min-height: 32px;
+        padding-inline: 8px;
+      }
+
+      .landscape-card {
+        width: min(82vw, 340px);
+      }
+
+      .film-dialog {
+        max-height: calc(100% - 24px);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to films</a>
+
+  <header class="site-header">
+    <a class="wordmark" href="../index.html" aria-label="VLC Première proposal home">
+      <span class="wordmark-main">VLC</span>
+      <span class="wordmark-product">Première</span>
+    </a>
+
+    <nav class="main-nav" aria-label="Design proposals">
+      <a href="../index.html">Home</a>
+      <a href="cinema.html" aria-current="page">Cinema</a>
+      <a href="archive.html">Archive</a>
+      <a href="spotlight.html">Spotlight</a>
+    </nav>
+
+    <div class="header-actions">
+      <label class="search-control">
+        <span class="sr-only">Search the sample films</span>
+        <input id="film-search" type="search" placeholder="Search films" autocomplete="off">
+      </label>
+      <button class="list-toggle" id="my-list-toggle" type="button" aria-pressed="false">
+        My list <span class="list-count" id="list-count" aria-hidden="true">2</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="featured-title">
+      <img class="hero-image" src="../assets/golden-hour.jpg" alt="Golden sunrise over a misty meadow with scattered trees beneath layered clouds">
+      <div class="hero-content">
+        <p class="sample-label">Design preview <span aria-hidden="true">·</span> sample library</p>
+        <p class="hero-kicker">Continue your film</p>
+        <h1 id="featured-title">The Long Way Home</h1>
+        <p class="hero-meta">
+          <span>Adventure</span><span class="meta-separator" aria-hidden="true">·</span>
+          <span>2025</span><span class="meta-separator" aria-hidden="true">·</span>
+          <span>1 hr 48 min</span>
+        </p>
+        <p class="hero-description">A last train west, an unfinished promise, and a road that keeps opening up.</p>
+        <div class="hero-actions">
+          <button class="button button-primary" type="button" data-open-film data-film-id="long-way-home">Resume</button>
+          <button class="button button-secondary" type="button" data-open-film data-film-id="long-way-home">More info</button>
+        </div>
+        <p class="hero-resume-note">Resume at 01:12:42 <span aria-hidden="true">·</span> preview interaction only</p>
+      </div>
+    </section>
+
+    <div class="library" id="film-library">
+      <section class="shelf" aria-labelledby="continue-title" data-shelf="continue">
+        <div class="shelf-heading">
+          <div>
+            <p class="shelf-kicker">In progress</p>
+            <h2 id="continue-title">Continue watching</h2>
+          </div>
+          <div class="shelf-controls" aria-label="Continue watching shelf controls">
+            <button class="scroll-control" type="button" data-scroll-target="continue-track" data-scroll-direction="-1" aria-label="Scroll Continue watching backward">Back</button>
+            <button class="scroll-control" type="button" data-scroll-target="continue-track" data-scroll-direction="1" aria-label="Scroll Continue watching forward">Next</button>
+          </div>
+        </div>
+        <p class="shelf-empty" data-empty-for="continue" role="status" hidden>No films match this view in Continue watching.</p>
+        <div class="shelf-track" id="continue-track" role="list" aria-label="Continue watching films" tabindex="0">
+          <article class="film-card" role="listitem" data-film-id="long-way-home" data-shelf="continue" data-title="The Long Way Home" data-genre="Adventure" data-year="2025" data-runtime="1 hr 48 min" data-position="01:12:42" data-progress="67" data-description="A last train west, an unfinished promise, and a road that keeps opening up." data-search-text="the long way home adventure road train promise">
+            <button class="landscape-card" type="button" data-open-film data-film-id="long-way-home" aria-label="Open details for The Long Way Home">
+              <span class="landscape-art">
+                <img src="../assets/golden-hour.jpg" alt="" loading="lazy" style="object-position: 55% 46%">
+                <span class="landscape-status">Resume film</span>
+                <span class="progress-track" role="progressbar" aria-label="The Long Way Home watched" aria-valuemin="0" aria-valuemax="100" aria-valuenow="67"><span style="--progress: 67%"></span></span>
+              </span>
+              <span class="landscape-caption">
+                <span><strong>The Long Way Home</strong><small>Adventure</small></span>
+                <span class="remaining-time">36 min left</span>
+              </span>
+            </button>
+          </article>
+
+          <article class="film-card" role="listitem" data-film-id="above-the-clouds" data-shelf="continue" data-title="Above the Clouds" data-genre="Drama" data-year="2024" data-runtime="1 hr 36 min" data-position="00:48:10" data-progress="51" data-description="A high-country weather station brings two old friends back into the same orbit." data-search-text="above the clouds drama mountain weather station">
+            <button class="landscape-card" type="button" data-open-film data-film-id="above-the-clouds" aria-label="Open details for Above the Clouds">
+              <span class="landscape-art">
+                <img src="../assets/alpine.jpg" alt="" loading="lazy" style="object-position: 50% 43%">
+                <span class="landscape-status">Resume film</span>
+                <span class="progress-track" role="progressbar" aria-label="Above the Clouds watched" aria-valuemin="0" aria-valuemax="100" aria-valuenow="51"><span style="--progress: 51%"></span></span>
+              </span>
+              <span class="landscape-caption">
+                <span><strong>Above the Clouds</strong><small>Drama</small></span>
+                <span class="remaining-time">47 min left</span>
+              </span>
+            </button>
+          </article>
+
+          <article class="film-card" role="listitem" data-film-id="blue-between" data-shelf="continue" data-title="Blue Between" data-genre="Romance" data-year="2025" data-runtime="1 hr 42 min" data-position="00:29:30" data-progress="29" data-description="Two strangers share a quiet crossing along a coast that neither planned to see." data-search-text="blue between romance coast crossing sea">
+            <button class="landscape-card" type="button" data-open-film data-film-id="blue-between" aria-label="Open details for Blue Between">
+              <span class="landscape-art">
+                <img src="../assets/coast.jpg" alt="" loading="lazy" style="object-position: 52% 50%">
+                <span class="landscape-status">Resume film</span>
+                <span class="progress-track" role="progressbar" aria-label="Blue Between watched" aria-valuemin="0" aria-valuemax="100" aria-valuenow="29"><span style="--progress: 29%"></span></span>
+              </span>
+              <span class="landscape-caption">
+                <span><strong>Blue Between</strong><small>Romance</small></span>
+                <span class="remaining-time">1 hr 12 min left</span>
+              </span>
+            </button>
+          </article>
+        </div>
+      </section>
+
+      <section class="shelf" aria-labelledby="recent-title" data-shelf="recent">
+        <div class="shelf-heading">
+          <div>
+            <p class="shelf-kicker">New to your collection</p>
+            <h2 id="recent-title">Recently added</h2>
+          </div>
+          <div class="shelf-controls" aria-label="Recently added shelf controls">
+            <button class="scroll-control" type="button" data-scroll-target="recent-track" data-scroll-direction="-1" aria-label="Scroll Recently added backward">Back</button>
+            <button class="scroll-control" type="button" data-scroll-target="recent-track" data-scroll-direction="1" aria-label="Scroll Recently added forward">Next</button>
+          </div>
+        </div>
+        <p class="shelf-empty" data-empty-for="recent" role="status" hidden>No films match this view in Recently added.</p>
+        <div class="shelf-track" id="recent-track" role="list" aria-label="Recently added films" tabindex="0">
+          <article class="film-card" role="listitem" data-film-id="quiet-universe" data-shelf="recent" data-title="A Quiet Universe" data-genre="Science fiction" data-year="2026" data-runtime="1 hr 51 min" data-position="New to your collection" data-progress="0" data-description="An observatory keeper listens for one last signal in the stillness between stars." data-search-text="a quiet universe science fiction observatory stars signal">
+            <button class="poster-card" type="button" data-open-film data-film-id="quiet-universe" aria-label="Open details for A Quiet Universe">
+              <span class="poster-art">
+                <img src="../assets/night-sky.jpg" alt="" loading="lazy" style="object-position: 50% 42%">
+                <span class="poster-caption"><strong>A Quiet Universe</strong><small>Science fiction <span aria-hidden="true">·</span> 2026</small></span>
+              </span>
+            </button>
+          </article>
+
+          <article class="film-card" role="listitem" data-film-id="where-road-ends" data-shelf="recent" data-title="Where the Road Ends" data-genre="Mystery" data-year="2025" data-runtime="1 hr 39 min" data-position="New to your collection" data-progress="0" data-description="A mapmaker follows a route that disappeared from every local chart decades ago." data-search-text="where the road ends mystery mapmaker desert route">
+            <button class="poster-card" type="button" data-open-film data-film-id="where-road-ends" aria-label="Open details for Where the Road Ends">
+              <span class="poster-art">
+                <img src="../assets/desert.jpg" alt="" loading="lazy" style="object-position: 54% 48%">
+                <span class="poster-caption"><strong>Where the Road Ends</strong><small>Mystery <span aria-hidden="true">·</span> 2025</small></span>
+              </span>
+            </button>
+          </article>
+
+          <article class="film-card" role="listitem" data-film-id="green-distance" data-shelf="recent" data-title="The Green Distance" data-genre="Adventure" data-year="2026" data-runtime="1 hr 44 min" data-position="New to your collection" data-progress="0" data-description="A field recorder returns to a forest valley to finish a sound archive begun by her father." data-search-text="the green distance adventure forest sound archive">
+            <button class="poster-card" type="button" data-open-film data-film-id="green-distance" aria-label="Open details for The Green Distance">
+              <span class="poster-art">
+                <img src="../assets/forest.jpg" alt="" loading="lazy" style="object-position: 50% 47%">
+                <span class="poster-caption"><strong>The Green Distance</strong><small>Adventure <span aria-hidden="true">·</span> 2026</small></span>
+              </span>
+            </button>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <p class="sr-only" id="collection-status" role="status" aria-live="polite"></p>
+  </main>
+
+  <dialog class="film-dialog" id="film-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-layout">
+      <div class="dialog-art"><img id="dialog-image" src="../assets/golden-hour.jpg" alt=""></div>
+      <div class="dialog-content">
+        <form method="dialog">
+          <button class="dialog-close" value="close" aria-label="Close film details">Close</button>
+        </form>
+        <p class="dialog-kicker">Sample film</p>
+        <h2 id="dialog-title">The Long Way Home</h2>
+        <p class="dialog-meta" id="dialog-meta">Adventure <span aria-hidden="true">·</span> 2025 <span aria-hidden="true">·</span> 1 hr 48 min</p>
+        <p class="dialog-description" id="dialog-description">A last train west, an unfinished promise, and a road that keeps opening up.</p>
+        <div class="dialog-actions">
+          <button class="button button-primary" type="button" id="dialog-play">Play preview</button>
+          <button class="button button-secondary" type="button" id="dialog-save" aria-pressed="false">Add to My list</button>
+        </div>
+        <p class="dialog-status" id="dialog-status" role="status" aria-live="polite">No media playback is connected in this design preview.</p>
+        <p class="dialog-footnote">Play is a simulated interaction for this sample library.</p>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    const filmCards = Array.from(document.querySelectorAll(".film-card"));
+    const searchInput = document.querySelector("#film-search");
+    const listToggle = document.querySelector("#my-list-toggle");
+    const listCount = document.querySelector("#list-count");
+    const collectionStatus = document.querySelector("#collection-status");
+    const filmDialog = document.querySelector("#film-dialog");
+    const dialogTitle = document.querySelector("#dialog-title");
+    const dialogMeta = document.querySelector("#dialog-meta");
+    const dialogDescription = document.querySelector("#dialog-description");
+    const dialogImage = document.querySelector("#dialog-image");
+    const dialogPlay = document.querySelector("#dialog-play");
+    const dialogSave = document.querySelector("#dialog-save");
+    const dialogStatus = document.querySelector("#dialog-status");
+    const savedFilmIds = new Set(["blue-between", "quiet-universe"]);
+    let showingMyList = false;
+    let activeFilmId = "";
+    let activeFilmOpener = null;
+
+    function filterFilms(query, listOnly) {
+      const term = query.trim().toLocaleLowerCase();
+      return filmCards.filter((card) => {
+        const matchesSearch = (card.dataset.searchText || card.textContent).toLocaleLowerCase().includes(term);
+        const matchesList = !listOnly || savedFilmIds.has(card.dataset.filmId);
+        return matchesSearch && matchesList;
+      });
+    }
+
+    function updateListCount() {
+      listCount.textContent = String(savedFilmIds.size);
+    }
+
+    function applyFilters() {
+      const visible = filterFilms(searchInput.value, showingMyList);
+      const visibleIds = new Set(visible.map((card) => card.dataset.filmId));
+      filmCards.forEach((card) => {
+        card.hidden = !visibleIds.has(card.dataset.filmId);
+      });
+
+      document.querySelectorAll("section.shelf[data-shelf]").forEach((shelf) => {
+        const shown = shelf.querySelectorAll(".film-card:not([hidden])").length;
+        const emptyMessage = shelf.querySelector(".shelf-empty");
+        if (emptyMessage) {
+          emptyMessage.hidden = shown > 0;
+          emptyMessage.textContent = showingMyList && searchInput.value.trim() === ""
+            ? "No saved films in this shelf yet."
+            : "No films match this view in this shelf.";
+        }
+      });
+
+      listToggle.setAttribute("aria-pressed", String(showingMyList));
+      const query = searchInput.value.trim();
+      if (query || showingMyList) {
+        const noun = visible.length === 1 ? "film" : "films";
+        collectionStatus.textContent = visible.length + " " + noun + " shown.";
+      } else {
+        collectionStatus.textContent = "";
+      }
+    }
+
+    function isVisible(element) {
+      return Boolean(
+        element &&
+        element.isConnected &&
+        element.getClientRects().length > 0 &&
+        window.getComputedStyle(element).visibility !== "hidden"
+      );
+    }
+
+    function openFilm(filmId, opener) {
+      const card = filmCards.find((item) => item.dataset.filmId === filmId);
+      if (!card) return;
+
+      activeFilmId = filmId;
+      activeFilmOpener = opener;
+      dialogTitle.textContent = card.dataset.title;
+      dialogMeta.textContent = [card.dataset.genre, card.dataset.year, card.dataset.runtime].join(" · ");
+      dialogDescription.textContent = card.dataset.description;
+      dialogImage.src = card.querySelector("img").getAttribute("src");
+      dialogImage.alt = "";
+      dialogStatus.textContent = "No media playback is connected in this design preview.";
+      updateDialogSaveButton();
+      filmDialog.showModal();
+    }
+
+    function updateDialogSaveButton() {
+      const isSaved = savedFilmIds.has(activeFilmId);
+      dialogSave.textContent = isSaved ? "Remove from My list" : "Add to My list";
+      dialogSave.setAttribute("aria-pressed", String(isSaved));
+    }
+
+    document.querySelectorAll("[data-open-film]").forEach((button) => {
+      button.addEventListener("click", () => openFilm(button.dataset.filmId, button));
+    });
+
+    searchInput.addEventListener("input", applyFilters);
+
+    listToggle.addEventListener("click", () => {
+      showingMyList = !showingMyList;
+      applyFilters();
+    });
+
+    dialogPlay.addEventListener("click", () => {
+      const card = filmCards.find((item) => item.dataset.filmId === activeFilmId);
+      if (card) dialogStatus.textContent = "Play selected for " + card.dataset.title + ". Playback is simulated in this preview.";
+    });
+
+    dialogSave.addEventListener("click", () => {
+      const card = filmCards.find((item) => item.dataset.filmId === activeFilmId);
+      if (!card) return;
+      if (savedFilmIds.has(activeFilmId)) {
+        savedFilmIds.delete(activeFilmId);
+        dialogStatus.textContent = card.dataset.title + " removed from My list for this session.";
+      } else {
+        savedFilmIds.add(activeFilmId);
+        dialogStatus.textContent = card.dataset.title + " added to My list for this session.";
+      }
+      updateDialogSaveButton();
+      updateListCount();
+      applyFilters();
+    });
+
+    document.querySelectorAll("[data-scroll-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const track = document.getElementById(button.dataset.scrollTarget);
+        if (!track) return;
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        track.scrollBy({
+          left: Number(button.dataset.scrollDirection) * track.clientWidth * 0.72,
+          behavior: reducedMotion ? "auto" : "smooth"
+        });
+      });
+    });
+
+    filmDialog.addEventListener("click", (event) => {
+      if (event.target === filmDialog) filmDialog.close();
+    });
+
+    filmDialog.addEventListener("close", () => {
+      if (isVisible(activeFilmOpener)) {
+        activeFilmOpener.focus();
+      } else if (isVisible(searchInput)) {
+        searchInput.focus();
+      } else if (isVisible(listToggle)) {
+        listToggle.focus();
+      }
+      activeFilmOpener = null;
+      activeFilmId = "";
+    });
+
+    window.previewSelfCheck = function () {
+      const ids = filmCards.map((card) => card.dataset.filmId);
+      const cloudResults = filterFilms("clouds", false);
+      const noMatchResults = filterFilms("no-film-has-this-name", false);
+      const result = {
+        uniqueSampleIds: ids.length === 6 && new Set(ids).size === ids.length,
+        searchFindsClouds: cloudResults.length === 1 && cloudResults[0].dataset.filmId === "above-the-clouds",
+        unmatchedSearchIsEmpty: noMatchResults.length === 0,
+        savedFilterContainsOnlySavedFilms: filterFilms("", true).every((card) => savedFilmIds.has(card.dataset.filmId))
+      };
+      result.ok = Object.values(result).every(Boolean);
+      console.assert(result.ok, "Cinema preview self-check failed", result);
+      return result;
+    };
+
+    updateListCount();
+    applyFilters();
+  </script>
+</body>
+</html>
