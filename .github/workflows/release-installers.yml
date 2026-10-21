@@ -58,6 +58,9 @@ jobs:
           cargo +1.95.0 test --all-targets --locked --target "${{ matrix.target }}"
           if [ "${{ matrix.os }}" = "windows" ]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
+          elif [ "${{ matrix.os }}" = "macos" ]; then
+            # Leave room for the bundled VLC @executable_path runpaths added below.
+            export RUSTFLAGS="-C link-arg=-Wl,-headerpad_max_install_names"
           fi
           cargo +1.95.0 build --release --locked --bin rust-vlc --target "${{ matrix.target }}"
 
