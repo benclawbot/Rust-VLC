@@ -16,6 +16,8 @@ AppVerName=Rust-VLC {#AppVersion}
 DefaultDirName={autopf}\Rust-VLC
 DefaultGroupName=Rust-VLC
 UninstallDisplayName=Rust-VLC
+SetupIconFile={#SourceDir}\rust-vlc.ico
+UninstallDisplayIcon={app}\rust-vlc.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=admin
@@ -30,11 +32,14 @@ Uninstallable=yes
 [Files]
 Source: "{#SourceDir}\rust-vlc.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README-runtime.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\VLC-THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Inter-OFL.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\rust-vlc.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\VLC\*"; DestDir: "{app}\VLC"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Rust-VLC"; Filename: "{app}\rust-vlc.exe"
-Name: "{commondesktop}\Rust-VLC"; Filename: "{app}\rust-vlc.exe"; Tasks: desktopicon
+Name: "{group}\Rust-VLC"; Filename: "{app}\rust-vlc.exe"; IconFilename: "{app}\rust-vlc.ico"
+Name: "{commondesktop}\Rust-VLC"; Filename: "{app}\rust-vlc.exe"; IconFilename: "{app}\rust-vlc.ico"; Tasks: desktopicon
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"

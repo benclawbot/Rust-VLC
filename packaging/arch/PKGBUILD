@@ -1,0 +1,20 @@
+pkgname=rust-vlc
+pkgver=0.1.1
+pkgrel=1
+pkgdesc='Local movie and music player built with Rust and libVLC'
+arch=('x86_64')
+url='https://github.com/benclawbot/Rust-VLC'
+license=('unknown')
+depends=('libvlc>=3.0' 'libvlc<4' 'vlc-plugins-all>=3.0' 'vlc-plugins-all<4' 'fontconfig' 'libglvnd' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxkbcommon' 'libxkbcommon-x11' 'wayland')
+source=('rust-vlc' 'rust-vlc.png' 'rust-vlc.desktop' 'RUNTIME.md' 'Inter-OFL.txt' 'VLC-THIRD-PARTY.md' 'BUILD-INFO.txt')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm755 rust-vlc "$pkgdir/usr/bin/rust-vlc"
+  install -Dm644 rust-vlc.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/rust-vlc.png"
+  install -Dm644 rust-vlc.desktop "$pkgdir/usr/share/applications/rust-vlc.desktop"
+  install -Dm644 RUNTIME.md "$pkgdir/usr/share/doc/rust-vlc/RUNTIME.md"
+  install -Dm644 VLC-THIRD-PARTY.md "$pkgdir/usr/share/doc/rust-vlc/VLC-THIRD-PARTY.md"
+  install -Dm644 BUILD-INFO.txt "$pkgdir/usr/share/doc/rust-vlc/BUILD-INFO.txt"
+  install -Dm644 Inter-OFL.txt "$pkgdir/usr/share/licenses/rust-vlc/Inter-OFL.txt"
+}

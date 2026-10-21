@@ -268,6 +268,12 @@ impl Runtime {
     }
 
     fn load_candidates(candidates: Vec<RuntimeCandidate>) -> Result<Self, VlcError> {
+        #[cfg(target_os = "macos")]
+        let candidates = match platform::first_complete_runtime_candidate(&candidates) {
+            // VLC_PLUGIN_PATH is process-wide, so macOS must keep the runtime selected at startup.
+            Some(candidate) => vec![candidate],
+            None => candidates,
+        };
         let mut missing_plugins = None;
         let mut load_failures = Vec::new();
 

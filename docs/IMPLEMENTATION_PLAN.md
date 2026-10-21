@@ -11,7 +11,7 @@ Planning baseline: 2026-10-20. The approved targets are Arch Linux, macOS, and W
 | M1 | Arch desktop player with functional transport and queue | Native controls and queue implemented; Arch runtime acceptance remains open |
 | M2 | Persistent movie/series library and optional artwork | SQLite, additive scans, series/seasons, posters and progress implemented; root reconciliation/backdrops/manual candidate picker remain open |
 | M3 | Music, playlists, resume, player tools, settings | Tags, browse, persistent playlists, resume and core tools implemented; queue restoration and full settings remain open |
-| M4 | Tested installation/upgrade packages for all three OS families | Linux, Windows and macOS installers are configured in the tagged-release workflow; build, clean-install and upgrade evidence is pending. VLC is external; macOS packages are unsigned and not notarized |
+| M4 | Tested installation/upgrade packages for all three OS families | Tagged releases build an Arch package with libVLC and full plugin dependencies and Windows/macOS installers with VLC 3.0.24 bundled. Clean-install, upgrade and native playback evidence remains pending; macOS packages are unsigned and not notarized |
 
 A gate closes only with its evidence in [VALIDATION.md](VALIDATION.md). The native application now implements both movies and music. Compilation, a Windows smoke test and development archives do not close the remaining release milestones.
 
@@ -41,9 +41,9 @@ Each task is intended to fit a focused worker change. If it cannot be reviewed a
 | T15 | Tracks/subtitles and player tools | T05,T07 | Playback tool module and isolated UI tool components |
 | T16 | Optional online music artwork | T11,T13 | `src/metadata/music_online.rs`, provider fixtures/tests |
 | T17 | Settings, themes, diagnostics, privacy/About | T07,T11,T13 | Settings module/panel, preference tests |
-| T18 | Arch installation package and desktop entry | M1,T17 | `packaging/arch/`, install test report |
-| T19 | Windows runtime bundle and installation | T18 | `packaging/windows/`, Windows-specific platform code |
-| T20 | macOS bundle, runtime, signing/notarization | T18 | `packaging/macos/`, macOS-specific platform code |
+| T18 | Arch package, libVLC/plugin dependencies, desktop entry and icon | M1,T17 | `packaging/arch/`, install test report |
+| T19 | Windows VLC runtime bundle and desktop installation | T18 | `packaging/windows/`, Windows-specific platform code |
+| T20 | macOS app bundle with VLC runtime; signing/notarization | T18 | `packaging/macos/`, macOS-specific platform code |
 | T21 | Cross-platform release verification | T12,T13,T14,T15,T17,T18,T19,T20; T16 only if included | CI/release workflows, license/runtime inventory, release report |
 
 Schema changes from any feature must be coordinated with T06's owner. No parallel worker edits central migrations, Cargo.toml, model.rs, or app.rs without an ownership transfer. T07's owner or parent integrates feature views after the corresponding backend review.

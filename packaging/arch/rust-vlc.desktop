@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Rust-VLC
+Comment=Local movie and music player
+Exec=rust-vlc
+Icon=rust-vlc
+Terminal=false
+Categories=AudioVideo;Player;Video;Audio;

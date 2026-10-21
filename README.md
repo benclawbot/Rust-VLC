@@ -2,22 +2,20 @@
 
 A local movie and music player built with Rust, Slint and libVLC 3, inspired by [VLC Première](https://github.com/benclawbot/VLC-Premiere). Movies and Music share one player, so browsing another collection keeps playback running.
 
-Install a matching VLC 3 runtime with its plugins before launching the app. The installers do not bundle VLC.
-
 ## Get the application
 
-Download an installer from the [Rust-VLC v0.1.0 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.0). Each installer has a matching `.sha256` checksum beside it.
+Download an installer from the [Rust-VLC v0.1.1 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.1). Each installer has a matching `.sha256` checksum beside it.
 
 | Platform | Installer | Install |
 | --- | --- | --- |
-| Linux x86_64 | `rust-vlc-linux-x86_64-installer.tar.gz` (glibc 2.35+) | Extract, then run `./install.sh` |
-| Windows x86_64 | `rust-vlc-windows-x86_64-setup.exe` | Run Setup and follow its prompts |
-| macOS Apple Silicon | `rust-vlc-macos-arm64.pkg` | Open the package and install Rust-VLC in Applications |
-| macOS Intel | `rust-vlc-macos-x86_64.pkg` | Open the package and install Rust-VLC in Applications |
+| Arch Linux x86_64 | `rust-vlc-0.1.1-1-x86_64.pkg.tar.zst` | Run `sudo pacman -U rust-vlc-0.1.1-1-x86_64.pkg.tar.zst`; pacman installs libVLC 3 and the full plugin set as dependencies |
+| Windows x86_64 | `rust-vlc-windows-x86_64-setup.exe` | Run Setup; it includes VLC 3 and creates a desktop shortcut by default |
+| macOS Apple Silicon | `rust-vlc-macos-arm64.pkg` | Open the package; it installs Rust-VLC and its VLC runtime in Applications |
+| macOS Intel | `rust-vlc-macos-x86_64.pkg` | Open the package; it installs Rust-VLC and its VLC runtime in Applications |
 
-The repository is private, so release downloads require repository access. The macOS packages are unsigned and not notarized; macOS may warn during install or first launch. All platforms need a compatible VLC 3 runtime and plugins for the same CPU architecture as Rust-VLC. The Windows executable includes the MSVC runtime, so it does not need a separate Visual C++ Redistributable. See [runtime setup](packaging/RUNTIME.md) for platform-specific requirements.
+The repository is private, so release downloads require repository access. Windows and macOS installers bundle the matching VLC 3.0.24 runtime and plugins. The Arch package depends directly on libVLC and the full VLC plugin set, so pacman installs them with Rust-VLC without requiring the VLC desktop application. Linux adds an app-launcher entry and icon; Windows creates a desktop shortcut by default. The macOS packages are unsigned and not notarized, so macOS may warn during install or first launch. The Windows executable includes the MSVC runtime and does not need a separate Visual C++ Redistributable. See [runtime setup](packaging/RUNTIME.md) for details.
 
-Development executables are available from the [Actions workflow](https://github.com/benclawbot/Rust-VLC/actions/workflows/dev-artifacts.yml); those artifacts are for testing and do not replace the installers above.
+Development executables are available from the [Actions workflow](https://github.com/benclawbot/Rust-VLC/actions/workflows/dev-artifacts.yml); those artifacts are for testing and still require a separately installed VLC 3 runtime.
 
 ## Use your library
 
@@ -42,6 +40,10 @@ YouTube matching reads bounded public search-page data without running JavaScrip
 Downloaded artwork is validated, resized and cached. Cached covers remain usable offline; ambiguous matches can produce no artwork. Provider availability and credentials affect online lookup, while local playback continues independently.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB. See [TMDB attribution](https://developer.themoviedb.org/docs/faq).
+
+## Third-party components
+
+Windows and macOS releases include the unmodified VLC 3.0.24 runtime; Arch installs libVLC and its full plugin set from official package repositories. VLC components carry multiple open-source licenses: libVLC is LGPL 2.1-or-later, while individual modules and bundled libraries have their own terms. The installers include VLC notices and link to the corresponding source release in [third-party notices](packaging/VLC-THIRD-PARTY.md). Inter's OFL notice is included as well. Rust-VLC's application license has not yet been selected.
 
 ## Interface
 
@@ -70,12 +72,4 @@ cargo test --all-targets --locked
 cargo build --release --locked
 ```
 
-The [build workflow](.github/workflows/dev-artifacts.yml) lists Linux build packages and creates the four executable archives on native runners. The [release workflow](.github/workflows/release-installers.yml) builds a Linux tarball installer, Windows Setup executable, and separate Apple Silicon and Intel macOS packages on native runners. Runtime-dependent tests are explicitly ignored by the default suite and run separately when VLC, codecs or network access are available.
-
-## Review and remaining work
-
-[Validation](docs/VALIDATION.md) records exact checks and platform gates. The [source audit](docs/SOURCE_AUDIT.md) and [implementation plan](docs/IMPLEMENTATION_PLAN.md) track desktop behavior against VLC Première. Implementation workers use **GPT-6 Luna, Max**; independent review uses **GPT-6.1 Sol, xhigh**.
-
-This build does not claim complete Android parity. Equalizer, bookmarks, A–B repeat, sleep timer, frame capture, subtitle search/download, network shares/streams, casting, remote access and OS media integration remain follow-on work. Queue restoration, persistent library roots, scan reconciliation, playlist import/export and dedicated movie-genre metadata also remain open. Native Arch Wayland/X11 and macOS playback qualification and signed installation packages remain open gates; see [the parity review](docs/UX_PARITY_REVIEW.md) for the current comparison.
-
-The application license has not been selected. Inter's [OFL notice](assets/fonts/OFL.txt) ships with executable packages. VLC is installed separately; review dependency and runtime terms before redistribution.
+The [build workflow](.github/workflows/dev-artifacts.yml) creates development archives on native runners. The [release workflow](.github/workflows/release-installers.yml) builds the Arch package, Windows Setup executable, and separate Apple Silicon and Intel macOS packages. Source builds still require a compatible VLC 3 installation. Runtime-dependent tests are explicitly ignored by the default suite and run separately when VLC, codecs or network access are available.

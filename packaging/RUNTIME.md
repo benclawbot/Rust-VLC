@@ -1,29 +1,26 @@
 # Rust-VLC runtime requirements
 
-The Rust-VLC installers do not include VLC or VLC plugins. Install a compatible
-VLC 3 runtime with its plugins, or set `VLC_DIR` to the absolute VLC installation
-directory. It must contain the libVLC library and the platform's expected
-plugin directory (`plugins` on Windows and macOS; commonly `vlc/plugins` beside
-Linux system libVLC). The library, plugins, and executable must use the same CPU
-architecture. Plugin and codec availability depends on the installed VLC
-distribution.
+Release installers provide the VLC 3 runtime needed for playback. Windows and
+macOS bundle VideoLAN VLC 3.0.24 with its plugins for the matching CPU
+architecture. The Arch Linux package depends on the official `libvlc` and
+`vlc-plugins-all` packages, so `pacman` installs the runtime and full plugin set
+automatically without installing the VLC desktop application.
 
-The Linux installer installs into `$HOME/.local` by default. To choose another
-prefix, set `RUST_VLC_INSTALL_DIR` before running `install.sh`. Windows Setup
-installs the application and shortcuts; macOS packages install `Rust-VLC.app`
-under `/Applications`.
+The Windows installer installs the app and runtime together and creates a
+desktop shortcut by default. The macOS package installs `Rust-VLC.app` in
+`/Applications`, with VLC nested inside the app bundle. The Arch package adds
+Rust-VLC to the application launcher with its icon.
 
-- Linux x86_64 was built on Ubuntu 22.04 and requires glibc 2.35 or newer, a
-  desktop session using X11 or Wayland, and the matching system windowing and
-  graphics libraries. On Arch Linux, the standard VLC library and plugin paths
-  are discovered automatically.
-- Windows x86_64 statically links the MSVC C runtime and requires a compatible
-  installed VLC 3 x64 runtime and plugins; no separate Visual C++ Redistributable
-  is needed.
-- macOS packages and app bundles are unsigned and not notarized. macOS may warn
-  before installation or first launch. Install VLC 3 for the same architecture;
-  the app checks `/Applications/VLC.app` and accepts `VLC_DIR`.
+Windows x86_64 statically links the MSVC C runtime, so a separate Visual C++
+Redistributable is not required. macOS packages are unsigned and not notarized;
+macOS may warn before installation or first launch. Linux packages target Arch
+Linux x86_64 and use the distribution's native libraries.
 
-VLC files and signing credentials are not included. User library data remains in
-the operating system's application-data directory and is not removed by the
-installer or uninstaller.
+When running a binary built from source, install a matching VLC 3 runtime and
+plugins yourself or set `VLC_DIR` to the absolute VLC installation directory.
+Keep the library, plugins, and executable on the same CPU architecture. See
+[VLC third-party notices](VLC-THIRD-PARTY.md) for bundled versions, licenses,
+and upstream source links.
+
+User library data remains in the operating system's application-data directory
+and is not removed by the installer or uninstaller.

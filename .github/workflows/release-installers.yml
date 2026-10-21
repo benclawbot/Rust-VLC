@@ -71,14 +71,28 @@ jobs:
           package="$RUNNER_TEMP/rust-vlc-linux-x86_64"
           mkdir -p "$package" dist
           cp "target/${{ matrix.target }}/release/rust-vlc" "$package/rust-vlc"
-          cp packaging/linux-install.sh "$package/install.sh"
-          cp packaging/RUNTIME.md "$package/README-runtime.md"
+          cp assets/icons/rust-vlc.png "$package/rust-vlc.png"
+          cp packaging/arch/rust-vlc.desktop "$package/rust-vlc.desktop"
+          cp packaging/arch/PKGBUILD "$package/PKGBUILD"
+          cp packaging/RUNTIME.md "$package/RUNTIME.md"
+          cp packaging/VLC-THIRD-PARTY.md "$package/VLC-THIRD-PARTY.md"
           cp assets/fonts/OFL.txt "$package/Inter-OFL.txt"
-          chmod +x "$package/rust-vlc" "$package/install.sh"
           printf 'Target: %s\nVersion: %s\nSource commit: %s\n' "${{ matrix.target }}" "$version" "$GITHUB_SHA" > "$package/BUILD-INFO.txt"
-          archive="rust-vlc-linux-x86_64-installer.tar.gz"
-          tar -C "$RUNNER_TEMP" -czf "dist/$archive" "rust-vlc-linux-x86_64"
-          (cd dist && sha256sum "$archive" > "$archive.sha256")
+          test "$(sed -n 's/^pkgver=//p' "$package/PKGBUILD")" = "$version"
+          docker run --rm -e BUILD_UID="$(id -u)" -e BUILD_GID="$(id -g)" -v "$package:/build" archlinux:base-devel bash -lc '
+            set -euo pipefail
+            pacman -Syu --noconfirm base-devel libvlc vlc-plugins-all fontconfig libglvnd libx11 libxcb libxcursor libxi libxkbcommon libxkbcommon-x11 wayland
+            if ldd /build/rust-vlc | grep -q "not found"; then ldd /build/rust-vlc; exit 1; fi
+            useradd --create-home builder
+            chown -R builder:builder /build
+            su - builder -c "cd /build && makepkg --noconfirm --cleanbuild --nodeps"
+            chown -R "$BUILD_UID:$BUILD_GID" /build
+          '
+          package_file="$(find "$package" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -quit)"
+          test -n "$package_file"
+          installer="rust-vlc-${version}-1-x86_64.pkg.tar.zst"
+          mv "$package_file" "dist/$installer"
+          (cd dist && sha256sum "$installer" > "$installer.sha256")
 
       - name: Package Windows installer
         if: matrix.os == 'windows'
@@ -88,11 +102,23 @@ jobs:
           if ($env:GITHUB_REF_NAME.TrimStart('v') -ne $version) { throw "Tag version does not match Cargo.toml ($version)" }
           $package = Join-Path $env:RUNNER_TEMP "rust-vlc-windows-x86_64"
           $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
-          New-Item -ItemType Directory -Force -Path $package, $dist | Out-Null
+          $vlcPackage = Join-Path $package "VLC"
+          New-Item -ItemType Directory -Force -Path $package, $vlcPackage, $dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/rust-vlc.exe" (Join-Path $package "rust-vlc.exe")
           Copy-Item "packaging/RUNTIME.md" (Join-Path $package "README-runtime.md")
+          Copy-Item "packaging/VLC-THIRD-PARTY.md" (Join-Path $package "VLC-THIRD-PARTY.md")
           Copy-Item "assets/fonts/OFL.txt" (Join-Path $package "Inter-OFL.txt")
-          "Target: ${{ matrix.target }}`nVersion: $version`nSource commit: $env:GITHUB_SHA" | Set-Content -Encoding ascii (Join-Path $package "BUILD-INFO.txt")
+          Copy-Item "assets/icons/rust-vlc.ico" (Join-Path $package "rust-vlc.ico")
+          $vlcZip = Join-Path $env:RUNNER_TEMP "vlc-3.0.24-win64.zip"
+          $vlcExtract = Join-Path $env:RUNNER_TEMP "vlc-3.0.24-win64"
+          curl.exe -fL --retry 3 --max-time 180 -o $vlcZip "https://get.dc3.videolan.org/vlc/3.0.24/win64/vlc-3.0.24-win64.zip"
+          $vlcHash = (Get-FileHash -Algorithm SHA256 $vlcZip).Hash.ToLowerInvariant()
+          if ($vlcHash -ne "fcf30850371ad10c9373cc4f0f4501e7dee49e3e9ae9f20c72fb2661a1ca6323") { throw "VLC archive SHA-256 mismatch: $vlcHash" }
+          Expand-Archive -LiteralPath $vlcZip -DestinationPath $vlcExtract
+          $libvlc = Get-ChildItem -Path $vlcExtract -Filter "libvlc.dll" -File -Recurse | Select-Object -First 1
+          if ($null -eq $libvlc -or -not (Test-Path (Join-Path $libvlc.Directory.FullName "plugins"))) { throw "The VLC archive is missing libvlc.dll or its plugins folder" }
+          Get-ChildItem -LiteralPath $libvlc.Directory.FullName -Force | Copy-Item -Destination $vlcPackage -Recurse -Force
+          "Target: ${{ matrix.target }}`nVersion: $version`nSource commit: $env:GITHUB_SHA`nVLC runtime: 3.0.24`nVLC archive SHA-256: $vlcHash" | Set-Content -Encoding ascii (Join-Path $package "BUILD-INFO.txt")
           $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
           & $compiler "/DAppVersion=$version" "/DSourceDir=$package" "/DOutputDir=$dist" "packaging\windows-installer.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
@@ -109,11 +135,53 @@ jobs:
           test "${GITHUB_REF_NAME#v}" = "$version"
           root="$RUNNER_TEMP/pkg-root"
           app="$root/Applications/Rust-VLC.app"
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" dist
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks" dist
           cp "target/${{ matrix.target }}/release/rust-vlc" "$app/Contents/MacOS/rust-vlc"
           chmod +x "$app/Contents/MacOS/rust-vlc"
           cp packaging/RUNTIME.md "$app/Contents/Resources/README-runtime.md"
+          cp packaging/VLC-THIRD-PARTY.md "$app/Contents/Resources/VLC-THIRD-PARTY.md"
           cp assets/fonts/OFL.txt "$app/Contents/Resources/Inter-OFL.txt"
+          iconset="$RUNNER_TEMP/Rust-VLC.iconset"
+          mkdir -p "$iconset"
+          for size in 16 32 128 256 512; do
+            sips -z "$size" "$size" assets/icons/rust-vlc-1024.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+          done
+          for size in 16 32 128 256 512; do
+            doubled=$((size * 2))
+            sips -z "$doubled" "$doubled" assets/icons/rust-vlc-1024.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/Rust-VLC.icns"
+          vlc_dmg="$RUNNER_TEMP/vlc-3.0.24-${{ matrix.arch }}.dmg"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            vlc_url="https://download.videolan.org/pub/videolan/vlc/3.0.24/macosx/vlc-3.0.24-arm64.dmg"
+            vlc_sha="64a89d93cdd30b0e97131743e246373db82d6826ea882d265d46d74b136da2b7"
+          else
+            vlc_url="https://download.videolan.org/pub/videolan/vlc/3.0.24/macosx/vlc-3.0.24-intel64.dmg"
+            vlc_sha="1ef6c903e2dc026d4e58ddf7b2a9ed0eb6f8caf80a9a9f46f96490340b962707"
+          fi
+          curl -fL --retry 3 --max-time 240 -o "$vlc_dmg" "$vlc_url"
+          printf '%s  %s\n' "$vlc_sha" "$vlc_dmg" | shasum -a 256 -c -
+          mountpoint="$RUNNER_TEMP/vlc-mount-${{ matrix.arch }}"
+          mkdir -p "$mountpoint"
+          trap '[[ -z "$mountpoint" ]] || hdiutil detach "$mountpoint" -quiet || true' EXIT
+          hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "$vlc_dmg" >/dev/null
+          ditto "$mountpoint/VLC.app" "$app/Contents/Frameworks/VLC.app"
+          hdiutil detach "$mountpoint" -quiet
+          mountpoint=''
+          vlc_root="$app/Contents/Frameworks/VLC.app/Contents/MacOS"
+          test -d "$vlc_root/plugins"
+          test -d "$vlc_root/share"
+          find "$vlc_root" -name 'libvlc.dylib' -print -quit | grep -q .
+          executable="$app/Contents/MacOS/rust-vlc"
+          for path in \
+            "@executable_path/../Frameworks/VLC.app/Contents/MacOS/lib" \
+            "@executable_path/../Frameworks/VLC.app/Contents/MacOS/plugins" \
+            "@executable_path/../Frameworks/VLC.app/Contents/Frameworks"; do
+            install_name_tool -add_rpath "$path" "$executable"
+            otool -l "$executable" | grep -F "$path" >/dev/null
+          done
+          codesign --force --sign - "$executable"
+          codesign --verify --strict "$executable"
           cat > "$app/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -123,11 +191,13 @@ jobs:
             <key>CFBundleIdentifier</key><string>org.rustvlc.desktop</string>
             <key>CFBundleName</key><string>Rust-VLC</string>
             <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleIconFile</key><string>Rust-VLC.icns</string>
             <key>CFBundleShortVersionString</key><string>$version</string>
             <key>CFBundleVersion</key><string>$version</string>
           </dict>
           </plist>
           PLIST
+          printf 'Target: %s\nVersion: %s\nSource commit: %s\nBundled VLC runtime: 3.0.24\n' "${{ matrix.target }}" "$version" "$GITHUB_SHA" > "$app/Contents/Resources/BUILD-INFO.txt"
           plutil -lint "$app/Contents/Info.plist"
           package="rust-vlc-macos-${{ matrix.arch }}.pkg"
           pkgbuild --root "$root" --identifier org.rustvlc.desktop --version "$version" --install-location / --ownership recommended "dist/$package"
