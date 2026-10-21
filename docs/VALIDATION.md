@@ -1,31 +1,49 @@
 # Validation and release gates
 
-Current baseline (2026-10-20) contains the Archive HTML preview and an initial Rust/Slint Windows audio slice. Formatting, Clippy, all-target checking and unit tests pass using the installed stable toolchain through a per-process `RUSTUP_TOOLCHAIN` override; the repository's pinned toolchain file was not changed. The default suite reports 14 passed and one ignored libVLC runtime regression; that regression also passes when run explicitly with the installed libVLC 3 runtime. These checks do not close an Arch, macOS or Windows release gate.
+Implementation review: 2026-10-21. The native app now includes movie/video playback, a persistent local library, music metadata/artwork, ordered playlists and player tools. The pinned Rust 1.95.0 toolchain is installed on the Windows x86_64 host; libVLC 3.0.24 was used for playback validation. The final integrated checks and native UI evidence are recorded below. Development archives and compilation do not close native platform or installation gates.
 
 The HTML preview was manually checked for playlist creation from selected tracks, choosing an existing playlist, adding multiple checked tracks in displayed order, shuffling an opened playlist's stored order, clicking a shuffled song to start its matching preview, and rejecting a duplicate add while keeping keyboard focus on the Add button. Shuffling an equal-content playlist leaves the unrelated active queue intact; shuffling its owning playlist updates the queue while preserving the current song. At 1887×1096, the page has no horizontal overflow, every visible image loaded, and the browser reported no warnings or errors. Playback in this preview is simulated and produces no audio.
 
-The native window could not be visually inspected in this session, and audible speaker output was not checked. Linux Wayland/X11 video rendering, native macOS/Windows release packages, actual media-library scanning, metadata/artwork extraction and playlist persistence remain unverified or unimplemented.
+Independent Sol xhigh review covered frozen source lots, including callback ownership, queue occurrences, migrations, path encoding, provider boundaries and the original Première collection/playlist/playback flows. Luna Max workers implement the fixes. [UX_PARITY_REVIEW.md](UX_PARITY_REVIEW.md) records the behavior comparison and explicit gaps. Captured Android screens and source inspection are evidence of the reference experience, not a new APK test.
 
-## HTML proposals (D00)
+The dependency update checked stable versions against crates.io, moved reqwest from 0.12.28 to 0.13.5 with its explicit blocking/query/rustls features, and refreshed compatible transitive versions. Other direct dependencies were already current. Reqwest's TLS backend also requires CMake when building AWS-LC. `cargo audit --file Cargo.lock` with cargo-audit 0.22.2 refreshed RustSec and scanned the updated 634-dependency lockfile: exit 0, no reported vulnerability, six unmaintained warnings (`bincode`, `paste`, `ttf-parser`, `zbus_names`, `zvariant`, `zvariant_derive`). These upstream maintenance warnings remain recorded; the audit is not proof of memory safety or of a clean native runtime.
 
-Serve the repository locally on loopback. Confirm that all fonts/images come from design/assets/ and that no external request is needed. Inspect Cinema, Archive and Spotlight at 1440×1000, 1024×768 and 800×900, including empty search and open title details. Check no body horizontal overflow, clipped primary action or broken image. Exercise search/filter/sort where present, navigation, title selection, My list, simulated Play feedback, series episodes, Esc and focus return. Test using keyboard and reduced motion. Preview sample content must be labelled.
+## Integration review evidence (2026-10-21)
 
-Each proposal exposes `window.previewSelfCheck()` for a small assert-based data/behavior check. This supplements browser interaction; it does not replace it. Browser automation should use the environment's approved browser tools, with screenshots inspected visually. The source reference was inspected as a phone screenshot and CSS; a desktop redesign is not a pixel clone.
+The current integrated checks on Windows x86_64 are `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo test --all-targets --locked` (119 passed, 6 ignored), and `cargo clippy --all-targets --locked -- -D warnings`; all pass after the player-tools and mini-player icon update. Six runtime/network tests remain explicitly ignored by the default suite. The initial test run exposed an incorrect one-based expectation in the later-page playlist fixture; its zero-based occurrence assertions were corrected and the suite rerun. Later review also added coverage for automatic-art retry ordering and rejecting live/cover variants from YouTube music matches.
+
+The Windows `cargo build --release --locked` build passed. A second Windows release build with `RUSTFLAGS=-C target-feature=+crt-static` also passed; PE import-table inspection confirmed the executable no longer imports `VCRUNTIME` or `MSVCP` DLLs. The tagged-release workflow uses the same flag for Windows tests and builds. The workflow YAML parses, and `packaging/linux-install.sh` passes `bash -n` plus an isolated smoke install that verified the binary, runtime guide, font license and desktop entry land in the selected directories. This smoke used a placeholder executable, so it validates installation paths only. Inno Setup compilation and macOS package creation require their native GitHub runners; the first tagged release must pass all four runner jobs before the packages are considered built.
+
+Frozen-source Sol xhigh review found and verified fixes for model identity during UI refresh, same-item resume ownership, asynchronous VLC startup readiness, and Windows canonical path handling. The isolated playback harness passed 12 focused unit tests, three native resume tests and five prior native regressions with the installed libVLC 3.0.24 runtime. The resume tests repeatedly replaced the same item, queued different resume positions rapidly, and stopped a pending resume before a fresh play.
+
+The native GUI exposed a Windows import failure that ordinary-path fixtures had missed: VLC interpreted `\\?\C:\...` as `file://?/C%3A/...` and immediately ended playback without frames. After the boundary fix, both direct-engine and playback-worker tests passed for ordinary paths (2 tests) and canonical imported paths (2 tests), decoding frames and retaining the expected 60-second duration and first queue item. Stored paths were not rewritten. Actual UNC shares and native long-path playback remain unverified.
+
+The final custom-control review corrected dropdown selection/scrolling, long-text caret visibility, slider cancellation/focus loss, checkbox focus, slider arrow-key routing and Space activation on transport buttons. Right-click text-edit menus remain a usability gap. The latest visual refinement removes the raw media path from the player-tools panel, hides an empty chapters column, centers the responsive tool groups with dividers, and uses compact icons for clear actions. Stopped playback also presents Play instead of Pause. The Slint screen compiles, but this session cannot inspect a fresh native capture. Existing screenshots document the earlier native layout and need recapture before being called current.
+
+The final independent GPT-6.1 Sol xhigh review found no remaining actionable findings. It confirmed the Windows runtime import fix, the 853-pixel player-tools layout with chapters at the 900-pixel minimum, and the correct Play/Replay/Pause state labels. The reviewer did not verify native rendering, clean-system install/upgrade, or tagged CI packaging.
+
+The Windows x86_64 debug app was inspected at 1920×1152 with an isolated synthetic library; [Movies](screenshots/movies.jpg) and [Music](screenshots/music.jpg) are native Rust/Slint captures, not HTML mockups. The player was launched from a movie card into borderless fullscreen with the three transport controls centered, and Escape returned to the library. The same synthetic sample set includes H.264 test-pattern video, tagged FLAC tracks and local artwork. These checks validate the Windows display path only; they do not establish multi-hour playback, all codecs, audio fidelity or another operating system's renderer.
+
+## Selected HTML reference (D00)
+
+Serve the selected `design/proposals/archive.html` locally on loopback. Confirm that fonts/images come from design/assets/ and that no external request is needed. Inspect desktop and narrow sizes, including empty search and title details. Check no horizontal overflow, clipped primary action or broken image. Exercise search/filter/sort where present, navigation, title selection, My list, simulated Play feedback, series episodes, Esc and focus return. Test keyboard and reduced motion. Preview sample content must be labelled.
+
+The preview exposes `window.previewSelfCheck()` for a small assert-based data/behavior check. This supplements browser interaction; it does not replace it. Browser automation uses the environment's approved browser tools, with screenshots inspected visually. The source reference was inspected as phone screenshots, Java and CSS; the desktop redesign preserves its visual language without copying its phone layout.
 
 Archive's selected music extension also requires Movies/Music switching, artist/album/track/genre navigation, album track selection, queue display, previous/next and preview play/pause. Check that changing the visible library retains the selected mini-player track, square art stays square and the player does not cover the final content row. All audio feedback must remain labelled as simulated. Native audio release acceptance still requires real MP3/FLAC decoding, transport, queue advancement and playlist restart persistence.
 
 ## Automated Rust checks
 
 ```sh
-$env:RUSTUP_TOOLCHAIN='stable-x86_64-pc-windows-msvc'
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo check --all-targets --locked
 cargo test --all-targets --locked
 cargo build --locked
+cargo build --release --locked
 ```
 
-All five cargo commands above pass on the current Windows host. `cargo test` reports 14 passed, 0 failed and 1 ignored test; the ignored test requires installed libVLC 3 and also passes when run explicitly. A release package build has not been performed.
+Final command outcomes are recorded with the delivery evidence below. Runtime- and network-dependent tests are ignored in the default suite and must be explicitly selected; ignored does not mean passed. One cold libVLC initialization exceeded the old five-second test deadline during review, then passed on a warm rerun; initialization deadlines and actual runtime failures must be distinguished.
 
 Separate runtime/display-dependent checks with an explicit test name or feature decided in T01. Keep pure filename, queue, scan reconciliation and SQLite tests runnable without libVLC or network access. Do not introduce an architecture solely to satisfy a test harness. Dependency/security review checks belong in CI once the dependency graph exists; pin any added tooling and document its version.
 

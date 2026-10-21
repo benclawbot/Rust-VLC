@@ -1,39 +1,23 @@
-# Desktop movie presentation proposals
+# Selected desktop interface
 
-**Selected direction: Archive.** The user selected Archive on 2026-10-20 and then refined it: remove proposal navigation, put a prominent Movies/Music switch at the top of the main section, and add music posters plus a Playlists view. The target for T07 is the full-width poster catalogue, direct search/filter/sort, title detail dialog, and music views. Cinema and Spotlight remain comparison references.
+The selected direction is the **Archive style**: a full-width movie catalogue and an artwork-led music library, joined by a prominent **Movies / Music** switch. “Archive” describes the visual style; the movie page itself is titled **Movies**. The single selected preview is [archive.html](proposals/archive.html).
 
-The Music destination includes poster artwork for album, artist, genre and playlist cards, matching cover thumbnails on track rows, album/artist/track/genre/playlist views, album tracks, multi-track selection, and a preview mini-player. Selected songs can be added in displayed order to a new playlist or one chosen from the playlist list. An opened playlist can shuffle its stored track order. The HTML photographs and metadata are sample content; they demonstrate layout, not detected library art or actual decoding. The native audio slice currently has real local tracks and session-only playlists with order shuffling, while movie browsing, tag/artwork extraction and persistence remain follow-up work.
+## Movies
 
-Reading this as: a desktop movie and series library for people browsing their own media, preserving Première's warm cinema identity with Netflix-inspired access through artwork, shelves and title details. This is product UI rather than a marketing site. Design variance 4/10, motion 2/10, density 5/10; Archive intentionally increases density to 7/10.
+The movie page uses poster cards, search, genre filters, sorting, a saved list and title details. Its catalogue density makes a larger local collection easier to scan while retaining Première's warm dark palette and clear orange actions.
 
-## Preserved design language
+## Music
 
-From the inspected [Première proposal stylesheet](https://github.com/benclawbot/VLC-Premiere/blob/5a919454a41f5c490b90e2016437ff77be859da3/design-proposals/premiere/styles.css):
+Music uses poster-style cards for albums, artists, genres and playlists, with cover thumbnails on track rows. Users can start a song by clicking its row, select several tracks with leading checkboxes, add the selection to a new or existing playlist, and shuffle an opened playlist's stored order.
 
-| Token | Value |
-| --- | --- |
-| Typeface | Inter, then UI/system sans-serif; preview self-hosts Inter Variable |
-| Background | `#141312` |
-| Main text | `#e7ddcc` |
-| Muted text | `#aaa196` |
-| Accent | `#f46b32` |
-| Separator | `#3b3631` |
-| Panel | `#211e1b` |
+## Visual language and limits
 
-Retain restrained corners, readable title hierarchy, real artwork, and orange for selection/playback actions. Use legible dark text on orange buttons where ivory would not meet contrast. No Netflix wordmark, red branding, fake ratings, autoplaying promotional video, or unrelated marketing panels.
+The preview preserves Première's Inter/system sans-serif stack and Archive composition. The user's 2026-10-21 palette refinement uses dark brown surfaces (`#141312`, `#211e1b`), white text and orange accents (`#f46b32`), including focus, selection and playback controls. Blue system accents must not enter the application layout. Preserve the prominent Movies/Music switch at the top left, full-width catalogue, portrait movie posters and square music artwork.
 
-## Directions to compare
+It is a local HTML design reference, not the production UI. Sample titles and photographs do not represent a scanned library, and preview playback does not decode media or contact artwork providers. The native app is a separate Rust/Slint implementation.
 
-| Proposal | Main decision it explores | Trade-off |
-| --- | --- | --- |
-| Cinema | One featured title leads into continue-watching and recently-added shelves | Immersive access; fewer titles visible at once |
-| Archive | Full-width movie poster catalogue, prominent Movies/Music switch, and artwork-led music views | Faster scanning of larger collections; less featured artwork |
-| Spotlight | A selected title anchors the screen while a collection and episodes stay close | Strong title/series context; more deliberate exploration |
+See [asset provenance](assets/README.md) before redistributing the preview photography or font assets.
 
-Cards open details; explicit Play/Resume actions show simulated feedback. Search/filter and list changes operate only on the sample library. Episode selection demonstrates how local seasons could work. No action scans a disk, contacts a provider or starts VLC.
+## Video player proposal
 
-The previews reuse six photographs and fictional movie titles from the original visual proposal. This keeps composition comparisons consistent and avoids suggesting that a real user's library has been loaded. Photography/fonts are local. See [asset provenance](assets/README.md). Final media cards will use actual matched posters/backdrops and honest filename fallbacks.
-
-## Selection hand-off
-
-The selected source is the current `design/proposals/archive.html`, including the follow-up changes requested on 2026-10-20. Check the desktop and narrow layouts before translating it into Slint. Do not copy HTML or a browser engine into the Rust runtime. Dark/light/system themes and loading/empty/error states remain production tasks even though this proposal concentrates on the requested dark presentation.
+[video-refinement.html](proposals/video-refinement.html) is a separate playback proposal under review. It uses an edge-to-edge picture, central Previous / Play-Pause / Next controls, a plain timeline and a Tools drawer for audio, subtitles and speed. The duplicate bottom transport, chapter markers/list, Theatre toggle and top proposal label have been removed following review. Its playback remains simulated; it does not replace Archive as the Movies and Music library reference.

@@ -37,6 +37,21 @@ impl fmt::Display for PlaylistError {
 impl std::error::Error for PlaylistError {}
 
 impl PlaylistCollection {
+    pub fn restore(playlists: Vec<Playlist>, selected_id: Option<PlaylistId>) -> Self {
+        let next_id = playlists
+            .iter()
+            .map(|playlist| playlist.id)
+            .max()
+            .unwrap_or(0);
+        let selected_id =
+            selected_id.filter(|id| playlists.iter().any(|playlist| playlist.id == *id));
+        Self {
+            playlists,
+            selected_id,
+            next_id,
+        }
+    }
+
     pub fn playlists(&self) -> &[Playlist] {
         &self.playlists
     }
@@ -93,6 +108,14 @@ impl PlaylistCollection {
     }
 
     pub fn add_tracks(&mut self, tracks: &[Track]) -> Result<usize, PlaylistError> {
+        self.add_tracks_with_duplicates(tracks, false)
+    }
+
+    pub fn add_tracks_with_duplicates(
+        &mut self,
+        tracks: &[Track],
+        allow_duplicates: bool,
+    ) -> Result<usize, PlaylistError> {
         let Some(id) = self.selected_id else {
             return Err(PlaylistError::NoPlaylistSelected);
         };
@@ -104,7 +127,7 @@ impl PlaylistCollection {
 
         let mut added = 0;
         for track in tracks {
-            if !playlist.track_ids.contains(&track.id) {
+            if allow_duplicates || !playlist.track_ids.contains(&track.id) {
                 playlist.track_ids.push(track.id);
                 added += 1;
             }
@@ -113,11 +136,25 @@ impl PlaylistCollection {
     }
 
     pub fn shuffle_selected(&mut self) -> Result<(), PlaylistError> {
-        self.shuffle_selected_with_rng(&mut fastrand::Rng::new())
+        let id = self.selected_id.ok_or(PlaylistError::NoPlaylistSelected)?;
+        self.shuffle_playlist(id)
     }
 
+    pub fn shuffle_playlist(&mut self, id: PlaylistId) -> Result<(), PlaylistError> {
+        self.shuffle_playlist_with_rng(id, &mut fastrand::Rng::new())
+    }
+
+    #[cfg(test)]
     fn shuffle_selected_with_rng(&mut self, rng: &mut fastrand::Rng) -> Result<(), PlaylistError> {
         let id = self.selected_id.ok_or(PlaylistError::NoPlaylistSelected)?;
+        self.shuffle_playlist_with_rng(id, rng)
+    }
+
+    fn shuffle_playlist_with_rng(
+        &mut self,
+        id: PlaylistId,
+        rng: &mut fastrand::Rng,
+    ) -> Result<(), PlaylistError> {
         let playlist = self
             .playlists
             .iter_mut()
@@ -125,6 +162,75 @@ impl PlaylistCollection {
             .ok_or(PlaylistError::NoPlaylistSelected)?;
         rng.shuffle(&mut playlist.track_ids);
         Ok(())
+    }
+
+    pub fn rename(&mut self, id: PlaylistId, name: &str) -> Result<(), PlaylistError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(PlaylistError::EmptyName);
+        }
+        if self
+            .playlists
+            .iter()
+            .any(|playlist| playlist.id != id && playlist.name.eq_ignore_ascii_case(name))
+        {
+            return Err(PlaylistError::DuplicateName);
+        }
+        let playlist = self
+            .playlists
+            .iter_mut()
+            .find(|playlist| playlist.id == id)
+            .ok_or(PlaylistError::NoPlaylistSelected)?;
+        playlist.name = name.to_owned();
+        Ok(())
+    }
+
+    pub fn remove(&mut self, id: PlaylistId) -> bool {
+        let Some(position) = self.playlists.iter().position(|playlist| playlist.id == id) else {
+            return false;
+        };
+        self.playlists.remove(position);
+        if self.selected_id == Some(id) {
+            self.selected_id = None;
+        }
+        true
+    }
+
+    pub fn remove_selected_entry(&mut self, position: usize) -> bool {
+        let Some(id) = self.selected_id else {
+            return false;
+        };
+        self.remove_entry(id, position)
+    }
+
+    pub fn remove_entry(&mut self, id: PlaylistId, position: usize) -> bool {
+        let Some(playlist) = self.playlists.iter_mut().find(|playlist| playlist.id == id) else {
+            return false;
+        };
+        if position >= playlist.track_ids.len() {
+            return false;
+        }
+        playlist.track_ids.remove(position);
+        true
+    }
+
+    pub fn move_selected_entry(&mut self, from: usize, to: usize) -> bool {
+        let Some(id) = self.selected_id else {
+            return false;
+        };
+        self.move_entry(id, from, to)
+    }
+
+    pub fn move_entry(&mut self, id: PlaylistId, from: usize, to: usize) -> bool {
+        let Some(playlist) = self.playlists.iter_mut().find(|playlist| playlist.id == id) else {
+            return false;
+        };
+        if from >= playlist.track_ids.len() || to >= playlist.track_ids.len() {
+            return false;
+        }
+        let entry = playlist.track_ids.remove(from);
+        playlist.track_ids.insert(to, entry);
+        true
     }
 }
 
@@ -166,6 +272,25 @@ mod tests {
     }
 
     #[test]
+    fn adding_duplicate_occurrences_is_an_explicit_choice() {
+        let mut skipped = PlaylistCollection::default();
+        skipped.create("Skip duplicates").unwrap();
+        assert_eq!(
+            skipped.add_tracks_with_duplicates(&[track(1), track(1)], false),
+            Ok(1)
+        );
+        assert_eq!(skipped.playlists()[0].track_ids, [1]);
+
+        let mut kept = PlaylistCollection::default();
+        kept.create("Keep duplicates").unwrap();
+        assert_eq!(
+            kept.add_tracks_with_duplicates(&[track(1), track(1)], true),
+            Ok(2)
+        );
+        assert_eq!(kept.playlists()[0].track_ids, [1, 1]);
+    }
+
+    #[test]
     fn tracks_cannot_be_added_without_a_selected_playlist() {
         let mut playlists = PlaylistCollection::default();
         assert_eq!(
@@ -193,5 +318,69 @@ mod tests {
         let mut sorted_shuffled = shuffled.clone();
         sorted_shuffled.sort_unstable();
         assert_eq!(sorted_shuffled, original);
+    }
+
+    #[test]
+    fn playlist_occurrence_edits_preserve_duplicates_and_order() {
+        let mut playlists = PlaylistCollection::default();
+        playlists.create("Duplicates").unwrap();
+        playlists
+            .add_tracks_with_duplicates(&[track(1), track(1), track(2)], true)
+            .unwrap();
+
+        assert!(playlists.move_selected_entry(0, 2));
+        assert_eq!(playlists.playlists()[0].track_ids, [1, 2, 1]);
+        assert!(playlists.remove_selected_entry(1));
+        assert_eq!(playlists.playlists()[0].track_ids, [1, 1]);
+        assert!(!playlists.remove_selected_entry(2));
+        assert!(!playlists.move_selected_entry(0, 2));
+    }
+
+    #[test]
+    fn shuffle_by_id_does_not_change_the_selected_playlist() {
+        let mut playlists = PlaylistCollection::default();
+        let first = playlists.create("First").unwrap();
+        playlists
+            .add_tracks(&[track(1), track(2), track(3), track(4)])
+            .unwrap();
+        let selected = playlists.create("Selected").unwrap();
+        let original = playlists.playlists()[0].track_ids.clone();
+
+        playlists.shuffle_playlist(first).unwrap();
+
+        assert_eq!(playlists.selected_id(), Some(selected));
+        let shuffled = &playlists.playlists()[0].track_ids;
+        let mut sorted = shuffled.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, original);
+    }
+
+    #[test]
+    fn editing_an_open_playlist_does_not_change_the_add_destination() {
+        let mut playlists = PlaylistCollection::default();
+        let opened = playlists.create("Opened").unwrap();
+        playlists
+            .add_tracks_with_duplicates(&[track(1), track(2), track(1)], true)
+            .unwrap();
+        let target = playlists.create("Destination").unwrap();
+        assert_eq!(
+            playlists.rename(opened, " Destination "),
+            Err(PlaylistError::DuplicateName)
+        );
+        assert_eq!(
+            playlists.rename(opened, "  "),
+            Err(PlaylistError::EmptyName)
+        );
+        assert_eq!(playlists.rename(opened, " Renamed "), Ok(()));
+        assert!(playlists.move_entry(opened, 2, 0));
+        assert!(playlists.remove_entry(opened, 1));
+        assert_eq!(playlists.playlists()[0].name, "Renamed");
+        assert_eq!(playlists.playlists()[0].track_ids, [1, 2]);
+        assert_eq!(playlists.selected_id(), Some(target));
+        assert!(playlists.remove(opened));
+        assert_eq!(playlists.selected_id(), Some(target));
+        assert!(!playlists.remove(opened));
+        assert!(playlists.remove(target));
+        assert_eq!(playlists.selected_id(), None);
     }
 }

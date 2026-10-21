@@ -1,113 +1,69 @@
-# Architecture proposal
+# Architecture
 
-Status: provisional, 2026-10-20. The first Windows audio slice implements part of this structure. M0 must still prove Linux video rendering before the renderer and full runtime architecture are accepted.
+Implementation snapshot: 2026-10-21. Rust-VLC is one Rust package with a Slint interface and a dynamically loaded libVLC 3 runtime. The Windows development path is implemented; native Arch Wayland/X11 and macOS playback qualification remain open. See [validation](VALIDATION.md) for evidence rather than inferring support from compilation.
 
-## Stack and structure
+## Modules and dependencies
 
-Use one Cargo package at the repository root. This is a standalone repository, so no extra `desktop/` project is needed. Separate modules along ownership boundaries rather than introducing workspace crates.
-
-```text
-Cargo.toml                 parent-owned dependency/features manifest
-Cargo.lock                 committed for reproducible application builds
-rust-toolchain.toml        stable version verified and pinned in T01
-build.rs                   Slint build integration only
-src/main.rs                launch, UI setup, coordinated shutdown
-src/lib.rs                 modules exposed to focused integration tests
-src/model.rs               IDs, owned records, shared enums
-src/app.rs                 UI controller and orchestration
-src/playback/mod.rs        public commands/events, serialized player owner
-src/playback/ffi.rs        audited libVLC 3 types/symbols and RAII wrappers
-src/playback/frame.rs      bounded frame publication and lifetime protocol
-src/playback/queue.rs      pure queue transitions
-src/library/mod.rs         scan orchestration and browse queries
-src/library/scan.rs        traversal and generation/reconciliation
-src/library/series.rs      filename recognition and natural episode order
-src/storage.rs             SQLite connection owner and repository methods
-src/metadata/mod.rs        metadata precedence and artwork jobs
-src/metadata/tmdb.rs       optional movie/TV lookup and conservative matching
-src/metadata/music.rs      embedded/folder art, later provider work
-src/platform.rs            directories, native paths, runtime discovery
-ui/app.slint               selected desktop composition
-ui/components/             reused Slint controls, tokens, media cards
-tests/                     behavior and integration fixtures
-migrations/                ordered SQL migrations; storage owner only
-packaging/                 Arch, Windows, macOS installation definitions
-```
-
-The tree is a target, not a request to create empty files. Add modules when their task needs them.
-
-Use Slint for native UI; SQLite through a small Rust API for persistence; libVLC for decoding, demux, audio output, and playback. Prefer standard threads, channels, timers, and filesystem APIs. T01/T02 select and pin dependencies after verifying their current MSRV, platform support, and licensing. Candidate dependencies are `slint`/`slint-build`, `rusqlite`, `libloading` if dynamic loading wins the spike, `serde` where serialization is needed, a native file dialog crate, and an HTTP client with TLS. Add no async runtime unless the chosen network architecture requires it.
-
-## Threads and ownership
-
-The UI thread owns Slint windows, images, and view models. UI callbacks enqueue commands and return promptly. A serialized playback owner runs all libVLC control calls. A storage owner runs writes and migrations. Scan and artwork workers use bounded work queues. Do not create a worker per media file or per card.
-
-libVLC event/video callbacks may run concurrently. They copy only the required owned data, publish it, and return. Never call libVLC, acquire a lock held across a libVLC stop/release call, mutate Slint, or unwind across the C ABI from a callback. Keep callback context and the loaded library alive until the runtime can no longer call into them. Document the exact ordering and prove it with stop/reopen/close tests against the chosen runtime.
-
-For the first rendering experiment, publish a latest-owned-frame mailbox with at most a small fixed buffer pool. A UI timer consumes the latest frame and constructs a Slint image on the UI thread. Superseded frames are dropped; they are never queued indefinitely. Define pitch, byte order, alignment, checked allocation bounds, dimensions, and format renegotiation explicitly. Never expose a buffer to Slint while VLC can mutate it.
-
-This CPU-copy path is an experiment. VideoLAN documents efficiency and hardware-decoding limitations for memory callbacks. Native HWND, NSView, and X11 embedding are alternatives to measure; X11 embedding is not evidence of native Wayland support. If M0 fails its gate, record results and compare alternatives before broad UI implementation.
-
-Sources: [libVLC 3 playback and callback API](https://videolan.videolan.me/vlc-3.0/group__libvlc__media__player.html), [Slint image/thread model](https://docs.rs/slint/latest/slint/struct.Image.html), [UI-thread dispatch](https://docs.slint.dev/latest/docs/rust/slint/fn.invoke_from_event_loop).
-
-## Shared contracts to freeze in T01/T04
-
-These are contract requirements, not compiled APIs yet. The parent publishes actual signatures and examples before parallel consumers implement against them.
-
-| Contract | Required semantics |
+| Module | Responsibility |
 | --- | --- |
-| `MediaId` | Stable local DB identity; independent of artwork, title, path display, or query order |
-| Native path | `PathBuf` in memory; reversible OS-specific bytes/UTF-16 plus platform discriminator in storage; lossy text only for display |
-| Media record | Kind, local identity, display title, size/mtime fingerprint, duration if known, availability, optional movie/episode/audio metadata |
-| Player command | Load ordered items at an index, play, explicit pause, stop, seek milliseconds, volume, rate, track/subtitle selection, shutdown |
-| Player event | Owned snapshot/event with generation, media ID, state, elapsed/duration, seekability, errors and track lists; no raw pointers |
-| Queue item | Unique entry ID plus media ID; duplicate entries are allowed and addressable |
-| Scan request/result | Root ID and generation; discovered entries; complete/cancelled/error/offline outcome; only complete traversal can reconcile absence |
-| Artwork job/result | Media ID, metadata fingerprint, provider/query identity, source/confidence, dimensions, cache key; stale results are ignored |
-| UI intent | IDs plus typed values, never widget-owned references sent to workers |
+| `app.rs`, `ui/app.slint` | UI-thread models, user intents, collection navigation, progress and worker orchestration |
+| `playback/mod.rs` | Serialized playback owner, commands, snapshots, transport and queue editing |
+| `playback/ffi.rs` | libVLC 3 ABI, loaded library lifetime, owned player/media/list resources and callbacks |
+| `playback/frame.rs` | Bounded owned RGBA frame transfer to the UI thread |
+| `playback/queue.rs` | Pure queue traversal, duplicate occurrences, repeat and shuffle |
+| `model.rs`, `library.rs` | Native-path media records and displayed-row selection |
+| `scan.rs`, `library_worker.rs` | Bounded background folder traversal, metadata and artwork jobs |
+| `browse.rs`, `series.rs` | Music grouping and conservative filename-based series/season ordering |
+| `metadata.rs`, `credentials.rs` | Lofty tags, local art, bounded provider matching/cache and OS-backed TMDB credentials |
+| `storage.rs` | SQLite schema, migrations, native-path encoding and coalesced writes |
+| `platform.rs` | Runtime discovery from explicit installation and documented system locations |
 
-Use bounded command delivery with a defined busy result. Coalesce frequent time/volume/seek updates. Do not drop terminal state, error, end-of-media, or shutdown events. Associate each load with a generation so late events from a previous file cannot resume or advance the current queue.
+Rust and dependencies are pinned by `rust-toolchain.toml`, `Cargo.toml` and `Cargo.lock`. Slint 1.18.1 owns the window; libloading loads libVLC; rusqlite uses bundled SQLite; Lofty reads tags; reqwest uses blocking requests with rustls on a background thread; image validates and resizes artwork; rfd supplies native file dialogs. There is no production webview or local web server.
 
-## State and data model
+## Ownership and shutdown
 
-SQLite is the source of library truth; UI models are projections. Enable foreign keys and serialize schema changes. Use transactions for migrations, scan batches, playlist reorder, and queue persistence. Back up an existing database before a migration; detect newer unsupported schemas and preserve the file instead of trying to downgrade it. Keep credentials outside the library DB and logs.
+The UI thread owns every Slint window, model and image. UI callbacks send bounded commands; a timer observes owned playback snapshots. A separate short timer consumes the latest video frame. No Slint object crosses into playback, scan or storage threads.
 
-| Table group | Minimum data |
-| --- | --- |
-| roots, scan_runs | Native root path, enabled state, availability; generation and outcome |
-| media, root_membership | Stable media identity; native path; file fingerprint; membership in overlapping roots; missing/offline state |
-| series, episodes | Local series key, season/episode fields, overrides; provider IDs optional |
-| audio metadata | Artist/album/album-artist/genre/disc/track; unknowns remain unknown |
-| progress, history | Last observed position, duration, completion flag and history timestamps |
-| playlists, playlist_items | Names, ordered entry IDs/media IDs, duplicates retained |
-| queue_state | Ordered entries, current entry, shuffle/repeat state; restore paused |
-| artwork_matches | Provider ID, candidate confidence, manual correction, metadata fingerprint and cache key |
-| preferences | Theme, selected roots, view/sort, network opt-in; no tokens |
+One playback thread owns libVLC control calls. Callbacks do no libVLC calls and do not unwind across the C ABI. Decoding uses a small preallocated, aligned plane pool with checked dimensions and a strict per-frame allocation limit. Unlock copies a decoded picture into owned pending storage and returns its plane; the display callback publishes the picture at libVLC's presentation time. Pending storage and the latest-frame mailbox are bounded. Cleanup closes the callback context and waits for in-flight callback access before freeing it; the player is released before the runtime library.
 
-File moves do not automatically imply identity preservation in v1. Keep an unavailable record and allow explicit relink; do not merge two files on title alone. Overlapping roots must not duplicate records. Keep original native path spelling and filesystem-aware comparison; do not globally lowercase paths. Test Unix non-UTF-8 names and Windows UTF-16 edge cases on their native platform.
+The library worker has four pending jobs and 32 results. Automatic music artwork runs on a second worker with eight pending requests, so network lookup does not hold the UI thread or the worker's scan operation. Local metadata is published before an artwork request is queued; backpressure keeps eligible tracks from being silently dropped. Scans cap entries, nesting and warnings, skip symlinks and check cancellation between filesystem operations. Dropping the result receiver releases blocked publishers before join. Artwork cancellation prevents subsequent provider requests/redirects; an active request can still take its ten-second timeout, plus up to one second for provider rate limiting. A single operating-system filesystem call may still block.
 
-Scans traverse only user-selected roots, do not follow directory symlinks by default, skip app cache/data, report permission failures, and support cancellation. If any traversal fails, do not mark unseen members missing for that root. A disconnected drive is offline, not an empty library. Replacing a file at an existing path invalidates file-dependent metadata without deleting playlists/history by accident.
+Storage receives the latest owned library snapshot through a coalescing mailbox. It writes on its own thread, reports errors to the UI and flushes on coordinated exit. Exit joins workers; it does not delete source media.
 
-## Playback and queue behavior
+## Playback contracts
 
-Keep queue transitions as pure Rust logic with tests. Explicit Next/Previous follow the selected order; repeat-one applies to natural end-of-media, not manual Next. Repeat-all wraps; repeat-off stops at the end. Shuffle preserves a current entry and a stable shuffled traversal until the queue changes; Previous follows actual history. Define removal/reorder of the currently playing entry before implementation. One terminal event advances a load at most once. Playback errors surface the failing item and stop automatic advancement to prevent loops.
+Commands and snapshots contain owned Rust data, never player pointers or widget references. A load generation distinguishes successive plays of the same media, including duplicate playlist occurrences. Media-scoped controls and deferred seeks validate that generation. `PlayQueue` carries an optional initial resume position; the playback owner binds that seek to the new load, so a stale UI snapshot cannot consume it against an earlier play of the same movie. Queue edits additionally validate a queue revision and traversal position.
 
-For the music list, activating a song row starts that song immediately. Each row has a leading accessible checkbox; the list-level Select all applies to the rows currently displayed after filters, and Play selected queues checked rows in displayed order and starts the first. Adding checked tracks to a playlist uses that same displayed order and targets either a new named playlist or one chosen from the playlist list. An opened playlist can shuffle its stored track order, which updates the visible order immediately. Checkbox changes alone never start playback. Switching between Movies and Music preserves the current queue and playback state. The HTML preview and first native slice keep playlists for the current session; native playlist persistence remains part of T14.
+Queue traversal preserves duplicate occurrences. Repeat-one applies only to natural completion; manual Next still advances. Repeat-all wraps. Playback shuffle changes traversal without changing saved playlist order. Stored playlist shuffle changes that playlist's order and updates its owning active queue without reloading the current song; unrelated queues stay intact.
 
-Persist resume every five seconds and on pause, stop, item switch, and coordinated exit. Restore stopped/paused rather than auto-playing. Offer Resume/Start over when a video position exceeds ten seconds and is below completion. Default video completion is 95% of known duration or natural end; test short/unknown-duration media separately. Never mark complete just because a user manually stopped. Music starts at the beginning by default; history may still record the track. All thresholds live in one module and remain documented.
+Clicking a song plays its displayed collection at the clicked occurrence. Leading checkboxes never play media. Select all, Play selected and Add to playlist use displayed order. Movies and Music share one playback owner, so changing pages does not stop playback. Double-click starts a movie fullscreen; Escape leaves fullscreen without stopping it.
 
-## Metadata and artwork
+Movie progress is periodically saved and captured on transport changes and exit. Resume is offered beyond ten seconds and below 95% completion; Start over plays from the beginning. Music starts from the beginning. Startup never autoplays. Queue restoration across application restarts is not implemented.
 
-Extract local tags through available VLC APIs first. Support embedded/folder audio artwork before online music services. Preserve original title/tags alongside display metadata and manual overrides. Filename cleanup must retain numeric titles and sequel numbers. Recognize conservative `S01E02` and `1x02` patterns with fixtures; unsupported multi-episode/date patterns stay unclassified until explicitly handled. Keep specials (season zero), numeric ordering, missing episodes, and ambiguous series names honest.
+## Persistence and native paths
 
-Online lookup is optional and off until the user enables it. Explain that title/year/artist queries leave the device; never send full paths. Use a user-supplied TMDB read token from an environment variable for development or an OS credential store for the application. A credential-store failure means online lookup stays unavailable, not a plaintext fallback. Do not embed a shared API token.
+Schema version 2 stores media, local metadata/artwork overrides, ordered playlist entries, movie progress and selected view/volume/rate preferences. Duplicate playlist entries use their persisted positions. Album grouping uses album artist when available, retaining compilations with different performers.
 
-Rank candidates using local title/year/series information, reject conflicting sequels/years, require an evidence-tested margin for automatic matches, and offer manual selection/clear. Cache provider identity and query results separately from media identity. Fetch TMDB configuration for image base URLs/sizes. Restrict authorization to the API host and never forward it on redirects. Bound redirects, body/image dimensions, concurrent jobs, timeouts, and retries. Honor 429/Retry-After with capped backoff. Cache misses and transient failures differently.
+Native paths remain `PathBuf` in memory and are stored as Unix bytes or Windows UTF-16LE with an encoding discriminator. Display text may be lossy; playback paths are not reconstructed from it. Databases are platform-specific, not a cross-platform library interchange format.
 
-Start with a 256 MiB disk artwork budget, 32 MiB decoded-image budget, and two HTTP jobs; make the values constants, then measure. Cache writes are atomic, filenames are app-generated keys, and eviction is confined to the app-owned cache. Cached art works with online lookup disabled. Preserve a manual match during rescan; reject late results for changed metadata. Poster, landscape backdrop, and square album art are distinct cached variants.
+At the libVLC boundary, recognized Windows verbatim drive and UNC prefixes are adapted to the paths VLC accepts; stored paths remain untouched. Unsupported device namespaces are rejected. The current libVLC path interface requires UTF-8; Unix names that cannot be represented in UTF-8 produce an explicit playback error rather than a lossy substitution.
 
-## Platform boundary
+Transactions protect schema upgrades, library snapshots and playlist ordering. Recognized upgrades back up the existing database first. Future or unrecognized schemas are preserved and rejected. Imports are additive: an incomplete or disconnected scan never removes unseen media or history.
 
-Use platform data/config/cache directories; never the working directory or media folders. Runtime discovery accepts an explicitly configured absolute installation directory, then the app bundle, then documented platform locations. Never load a DLL from an arbitrary current directory. Probe architecture, version and required symbols before creating a player; report missing runtime/plugins with actionable setup text. Validate plugin discovery with actual media, not just `libvlc_new`.
+Persistent roots, file fingerprints, replacement detection, root membership and full scan reconciliation remain planned. There is no root-removal action and no automatic deletion based on scan absence. Media files are always read-only.
 
-Arch initially uses system libVLC and explicit playback plugin packages. Windows and macOS development may use a compatible installed VLC runtime. Distributable bundles must carry a tested runtime/plugin layout with an exact manifest, checksums, notices, and source/license obligations reviewed before release. Support claims require tests on the target OS and architecture. Signing/notarization credentials remain external to Git.
+## Artwork and privacy
+
+Local metadata uses filename fallback, embedded artwork, then named nearby cover/folder/poster images. A manual artwork override survives later metadata reads.
+
+TMDB artwork starts through the explicit movie/TV artwork action. The token comes from the system credential store, with `TMDB_READ_TOKEN` retained as a fallback for existing setups; it is sent only to the TMDB API host. Automatic music artwork starts after local metadata loading when embedded and nearby art are absent. It searches public YouTube results with the tagged track title and artist, accepts only strong matches, and falls back to MusicBrainz/Cover Art Archive, which may also receive the album tag. This uses a bounded parser for public `ytInitialData` and does not run page JavaScript or use sign-in cookies. Requests never contain native media paths.
+
+Authorization is confined to TMDB's API host. Redirects and provider hosts are validated. Responses, dimensions, decoded memory, disk cache, request duration and job counts are bounded. Matching rejects ambiguity; positive results and temporary negative results are cached separately. Downloaded art is validated and reduced to thumbnails, with a 256 MiB cache budget. The UI also bounds loaded artwork and visible rows.
+
+Artist and genre cards derive artwork from matching local tracks; they do not claim dedicated artist photography. Movie genre metadata is not yet populated from TMDB search results, so movie genre filtering depends on genre data already stored with a library item. Landscape backdrops and a provider-candidate picker remain follow-on work. The TMDB token is stored through the native Windows Credential Manager, macOS Keychain or Linux Secret Service; on Linux the user session must have a Secret Service provider running. Error messages do not include credentials.
+
+## Development executables
+
+The native-runner workflow produces Linux x86_64, Windows x86_64, macOS arm64 and macOS Intel archives, each with a source commit and checksum. VLC and plugins are installed separately and must match the executable architecture. Windows uses a GUI subsystem and reports fatal startup errors in a dialog. macOS archives contain unsigned app bundles.
+
+Development archives are distinct from signed, installed release packages. [Runtime setup](../packaging/RUNTIME.md) and [validation](VALIDATION.md) record the remaining platform, packaging and licensing gates.

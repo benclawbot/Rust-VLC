@@ -1,0 +1,129 @@
+name: Development executables
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows
+            arch: x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - os: macos
+            arch: arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - os: macos
+            arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libfontconfig-dev libwayland-dev libx11-dev libx11-xcb-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcursor-dev libxi-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev pkg-config wayland-protocols cmake
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --target "${{ matrix.target }}"
+
+      - name: Run locked tests and build release executable
+        shell: bash
+        run: |
+          cargo +1.95.0 test --all-targets --locked --target "${{ matrix.target }}"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            export RUSTFLAGS="-C target-feature=+crt-static"
+          fi
+          cargo +1.95.0 build --release --locked --bin rust-vlc --target "${{ matrix.target }}"
+
+      - name: Package Linux archive
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="rust-vlc-${{ matrix.os }}-${{ matrix.arch }}"
+          mkdir -p "$RUNNER_TEMP/$package" dist
+          cp "target/${{ matrix.target }}/release/rust-vlc" "$RUNNER_TEMP/$package/rust-vlc"
+          cp packaging/RUNTIME.md "$RUNNER_TEMP/$package/README-runtime.md"
+          cp assets/fonts/OFL.txt "$RUNNER_TEMP/$package/Inter-OFL.txt"
+          printf 'Target: %s\nSource commit: %s\n' "${{ matrix.target }}" "$GITHUB_SHA" > "$RUNNER_TEMP/$package/BUILD-INFO.txt"
+          tar -C "$RUNNER_TEMP" -czf "dist/$package.tar.gz" "$package"
+          (cd dist && sha256sum "$package.tar.gz" > "$package.tar.gz.sha256")
+
+      - name: Package Windows archive
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $packageName = "rust-vlc-${{ matrix.os }}-${{ matrix.arch }}"
+          $package = Join-Path $env:RUNNER_TEMP $packageName
+          $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
+          New-Item -ItemType Directory -Force -Path $package, $dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/rust-vlc.exe" (Join-Path $package "rust-vlc.exe")
+          Copy-Item "packaging/RUNTIME.md" (Join-Path $package "README-runtime.md")
+          Copy-Item "assets/fonts/OFL.txt" (Join-Path $package "Inter-OFL.txt")
+          "Target: ${{ matrix.target }}`nSource commit: $env:GITHUB_SHA" | Set-Content -Encoding ascii (Join-Path $package "BUILD-INFO.txt")
+          $archive = Join-Path $dist "${packageName}.zip"
+          Compress-Archive -Path (Join-Path $package "*") -DestinationPath $archive -Force
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          "$hash  ${packageName}.zip" | Set-Content -Encoding ascii "${archive}.sha256"
+
+      - name: Package macOS app archive
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/Rust-VLC.app"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          mkdir -p "$app/Contents/MacOS" dist
+          cp "target/${{ matrix.target }}/release/rust-vlc" "$app/Contents/MacOS/rust-vlc"
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>rust-vlc</string>
+            <key>CFBundleIdentifier</key><string>org.rustvlc.prototype</string>
+            <key>CFBundleName</key><string>Rust-VLC</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$version</string>
+            <key>CFBundleVersion</key><string>$version</string>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$app/Contents/Info.plist"
+          cp packaging/RUNTIME.md "$RUNNER_TEMP/README-runtime.md"
+          cp assets/fonts/OFL.txt "$RUNNER_TEMP/Inter-OFL.txt"
+          printf 'Target: %s\nSource commit: %s\n' "${{ matrix.target }}" "$GITHUB_SHA" > "$RUNNER_TEMP/BUILD-INFO.txt"
+          archive="rust-vlc-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          tar -C "$RUNNER_TEMP" -czf "dist/$archive" Rust-VLC.app README-runtime.md Inter-OFL.txt BUILD-INFO.txt
+          (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+
+      - name: Upload development artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-vlc-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

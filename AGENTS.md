@@ -1,6 +1,6 @@
 # Rust-VLC agent instructions
 
-Read README.md, docs/IMPLEMENTATION_PLAN.md, docs/ARCHITECTURE.md, and docs/HANDOFF.md before implementation. This repository contains a Rust desktop audio prototype and HTML design previews. The user selected Archive on 2026-10-20; design/proposals/archive.html remains the visual target for the broader UI migration.
+Read README.md, docs/IMPLEMENTATION_PLAN.md, docs/ARCHITECTURE.md, and docs/HANDOFF.md before implementation. This repository contains a Rust/Slint desktop movie and music player plus its HTML design reference. The user selected Archive on 2026-10-20; design/proposals/archive.html remains the visual target. Check docs/VALIDATION.md and docs/UX_PARITY_REVIEW.md for evidence and remaining gates.
 
 ## Roles and scope
 

@@ -1,517 +1,2156 @@
-import { Button, CheckBox, LineEdit, ListView } from "std-widgets.slint";
+import { ListView, Palette, ScrollView } from "std-widgets.slint";
+import "../assets/fonts/Inter.ttf";
 
 export struct TrackRow {
     id: int,
+    index: int,
+    playlist-position: int,
     title: string,
     detail: string,
+    genre: string,
+    duration: string,
     selected: bool,
+    artwork: image,
+    has-artwork: bool,
+    monogram: string,
+    can-resume: bool,
+    progress-label: string,
 }
 
-export struct PlaylistRow {
+export struct BrowseRow {
     id: int,
-    name: string,
-    track-count: int,
+    title: string,
+    detail: string,
+    genre: string,
+    year: string,
+    artwork: image,
+    has-artwork: bool,
+    monogram: string,
+    kind: string,
+    can-resume: bool,
+    progress-label: string,
+    saved: bool,
+}
+
+export struct TrackChoice {
+    id: int,
+    title: string,
+}
+
+export struct QueueRow {
+    position: int,
+    revision: string,
+    title: string,
+}
+
+component ArchiveButton {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    in property <bool> space-activates: true;
+    in property <string> style: "filled";
+    callback clicked();
+
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    min-width: root.style == "tab" || root.style == "plain" ? 0px : root.style == "icon" ? 48px : max(48px, content.min-width);
+    min-height: root.style == "tab" ? 36px : max(32px, content.min-height);
+    preferred-height: root.style == "tab" ? 36px : 32px;
+    forward-focus: focus-scope;
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) { root.clicked(); }
+    }
+
+    surface := Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: root.style == "chip" ? 16px : root.style == "tab" || root.style == "plain" ? 0px : root.style == "icon" ? 8px : 5px;
+        border-width: root.style == "plain" || root.style == "tab" ? 0px : 1px;
+        border-color: !root.enabled ? #48413b : root.primary ? #f46b32 : #51483f;
+        background: root.style == "tab" || root.style == "plain"
+            ? transparent
+            : root.style == "icon"
+            ? (root.primary
+                ? (touch-area.pressed ? #d95a2b : touch-area.has-hover ? #ff8050 : #f46b32)
+                : (touch-area.pressed ? #3b342e : touch-area.has-hover ? #51483f : #211e1bd9))
+            : root.style == "chip" && !root.primary ? #211e1b
+            : !root.enabled
+            ? (root.primary ? #754932 : #282522)
+            : touch-area.pressed
+                ? (root.primary ? #d95a2b : #211e1b)
+                : touch-area.has-hover
+                    ? (root.primary ? #ff8050 : #3b342e)
+                    : (root.primary ? #f46b32 : #302820);
+
+        content := HorizontalLayout {
+            padding-left: root.style == "tab" ? 10px : root.style == "plain" ? 0px : 12px;
+            padding-right: root.style == "tab" ? 10px : root.style == "plain" ? 0px : 12px;
+            padding-top: root.style == "tab" ? 0px : 4px;
+            padding-bottom: root.style == "tab" ? 0px : 4px;
+            alignment: center;
+            Text {
+                text: root.text;
+                color: !root.enabled ? #ffffff78 : root.style == "tab" ? (root.primary ? #f46b32 : #ffffffB3) : root.style == "plain" ? #ffffff : root.primary && root.style != "chip" ? #141312 : #ffffff;
+                font-size: root.style == "icon" ? 22px : 12px;
+                font-weight: 650;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+        }
+        if root.style == "tab" && root.primary: Rectangle {
+            x: 0px;
+            y: parent.height - 2px;
+            width: parent.width;
+            height: 2px;
+            background: #f46b32;
+        }
+    }
+
+    touch-area := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+        clicked => {
+            focus-scope.focus();
+            root.clicked();
+        }
+    }
+
+    focus-ring := Rectangle {
+        x: -2px;
+        y: -2px;
+        width: parent.width + 4px;
+        height: parent.height + 4px;
+        visible: root.enabled && focus-scope.has-focus;
+        background: transparent;
+        border-color: #f46b32;
+        border-width: 2px;
+        border-radius: 7px;
+    }
+
+    focus-scope := FocusScope {
+        width: 0px;
+        height: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (root.enabled && ((root.space-activates && event.text == Key.Space) || event.text == Key.Return)) {
+                root.clicked();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+}
+
+component ArchiveLineEdit {
+    in-out property <string> text;
+    in property <string> placeholder-text;
+    in property <bool> enabled: true;
+    in property <bool> password: false;
+    callback edited(text: string);
+    callback accepted(text: string);
+
+    min-height: 32px;
+    forward-focus: input;
+    accessible-role: text-input;
+    accessible-label: root.placeholder-text;
+    accessible-value: root.password ? "" : root.text;
+    accessible-placeholder-text: root.placeholder-text;
+    accessible-enabled: root.enabled;
+    accessible-action-set-value(value) => {
+        text = value;
+        edited(value);
+    }
+    accessible-action-set-selection-offsets(anchor, focus) => input.set-selection-offsets(anchor, focus);
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        clip: true;
+        background: #211e1b;
+        border-color: input.has-focus ? #f46b32 : #51483f;
+        border-width: input.has-focus ? 2px : 1px;
+        border-radius: 5px;
+
+        input := TextInput {
+            property <length> computed-x;
+
+            x: 10px + min(0px, max(parent.width - 20px - self.width, self.computed-x));
+            y: 2px;
+            width: max(1px, max(parent.width - 20px - self.text-cursor-width, self.preferred-width));
+            height: max(1px, parent.height - 4px);
+            text <=> root.text;
+            enabled: root.enabled;
+            single-line: true;
+            input-type: root.password ? InputType.password : InputType.text;
+            vertical-alignment: center;
+            color: #ffffff;
+            selection-background-color: #f46b32;
+            selection-foreground-color: #141312;
+            accessible-role: none;
+            cursor-position-changed(cursor-position) => {
+                if cursor-position.x + self.computed-x < 0px {
+                    self.computed-x = -cursor-position.x;
+                } else if cursor-position.x + self.computed-x > parent.width - 20px - self.text-cursor-width {
+                    self.computed-x = parent.width - 20px - cursor-position.x - self.text-cursor-width;
+                }
+            }
+            edited => root.edited(self.text);
+            accepted => root.accepted(self.text);
+        }
+
+        if root.text == "" && !input.has-focus: Text {
+            x: 10px;
+            y: 0px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.placeholder-text;
+            color: #ffffffA6;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+    }
+}
+
+component ArchiveCheckBox {
+    in property <string> text: "";
+    in property <bool> enabled: true;
+    in-out property <bool> checked: false;
+    callback toggled();
+
+    min-height: 24px;
+    forward-focus: focus-scope;
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-enabled: root.enabled;
+    accessible-label: root.text;
+    accessible-checked <=> root.checked;
+    accessible-action-default => {
+        if root.enabled {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            width: 17px;
+            height: 17px;
+            y: (parent.height - self.height) / 2;
+            background: root.checked ? #f46b32 : #302820;
+            border-color: focus-scope.has-focus ? #f46b32 : #ffffff66;
+            border-width: 1px;
+            border-radius: 3px;
+            if root.checked: Text {
+                text: "✓";
+                color: #141312;
+                font-size: 13px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+            if focus-scope.has-focus: Rectangle {
+                x: -3px;
+                y: -3px;
+                width: 23px;
+                height: 23px;
+                background: transparent;
+                border-color: #ffffff;
+                border-width: 2px;
+                border-radius: 5px;
+                accessible-role: none;
+            }
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: root.enabled ? #ffffff : #ffffff78;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+        clicked => {
+            focus-scope.focus();
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+    focus-scope := FocusScope {
+        x: 0px;
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if root.enabled && (event.text == Key.Space || event.text == Key.Return) {
+                root.checked = !root.checked;
+                root.toggled();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+}
+
+component ArchiveComboBoxRow inherits Rectangle {
+    in property <string> value;
+    in property <string> current-value;
+    in property <int> item-index;
+    in property <int> item-count;
+    in property <int> active-index;
+    in property <int> sync-generation;
+    callback matched(index: int);
+    callback activated(index: int);
+
+    height: 32px;
+    background: root.item-index == root.active-index ? #f46b32 : #211e1b;
+    accessible-role: list-item;
+    accessible-label: root.value;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.item-index == root.active-index;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => root.activated(root.item-index);
+
+    function update-match() {
+        if root.value == root.current-value {
+            root.matched(root.item-index);
+        }
+    }
+    init => root.update-match();
+    changed value => root.update-match();
+    changed item-index => root.update-match();
+    changed current-value => root.update-match();
+    changed sync-generation => root.update-match();
+
+    Text {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        text: root.value;
+        color: root.item-index == root.active-index ? #141312 : #ffffff;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => root.activated(root.item-index);
+    }
+}
+
+component ArchiveComboBox {
+    in property <[string]> model: [];
+    in-out property <string> current-value: "";
+    in property <bool> enabled: true;
+    out property <bool> has-focus: focus-scope.has-focus;
+    private property <int> active-index: 0;
+    private property <bool> expanded: false;
+    private property <int> sync-generation: 0;
+    private property <bool> value-match-found: false;
+    callback selected(value: string);
+
+    min-width: 160px;
+    min-height: 32px;
+    forward-focus: focus-scope;
+    accessible-role: combobox;
+    accessible-label: "Choose a value";
+    accessible-enabled: root.enabled;
+    accessible-expandable: true;
+    accessible-expanded: root.expanded;
+    accessible-value: root.current-value;
+    accessible-action-expand => root.open-popup();
+
+    function sync-active-index() {
+        root.active-index = 0;
+        root.value-match-found = false;
+        root.sync-generation += 1;
+    }
+    function open-popup() {
+        if root.enabled && root.model.length > 0 {
+            root.sync-active-index();
+            root.expanded = true;
+            popup.show();
+        }
+    }
+    function close-popup() {
+        root.expanded = false;
+        popup.close();
+    }
+    function move-active(delta: int) {
+        if root.model.length > 0 {
+            root.active-index = Math.mod(root.active-index + delta + root.model.length, root.model.length);
+        }
+    }
+    function choose-active() {
+        if root.active-index >= 0 && root.active-index < root.model.length {
+            root.current-value = root.model[root.active-index];
+            root.selected(root.current-value);
+            root.close-popup();
+        }
+    }
+    init => root.sync-active-index();
+    changed current-value => root.sync-active-index();
+    changed model => root.sync-active-index();
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #211e1b;
+        border-color: focus-scope.has-focus ? #f46b32 : #51483f;
+        border-width: focus-scope.has-focus ? 2px : 1px;
+        border-radius: 5px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 9px;
+            Text {
+                horizontal-stretch: 1;
+                text: root.current-value;
+                color: root.enabled ? #ffffff : #ffffff78;
+                vertical-alignment: center;
+                overflow: elide;
+                accessible-role: none;
+            }
+            Text { text: "⌄"; color: #f46b32; vertical-alignment: center; accessible-role: none; }
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            enabled: root.enabled;
+            clicked => {
+                focus-scope.focus();
+                if root.expanded { root.close-popup(); } else { root.open-popup(); }
+            }
+        }
+    }
+
+    focus-scope := FocusScope {
+        x: 0px;
+        width: 0px;
+        enabled: root.enabled;
+        changed has-focus => {
+            if self.has-focus { root.expanded = false; }
+        }
+        key-pressed(event) => {
+            if !root.enabled { return reject; }
+            if event.text == Key.DownArrow || event.text == Key.Space || event.text == Key.Return {
+                if !root.expanded { root.open-popup(); }
+                else if event.text == Key.DownArrow { root.move-active(1); }
+                else { root.choose-active(); }
+                accept
+            } else if event.text == Key.UpArrow {
+                if !root.expanded { root.open-popup(); }
+                else { root.move-active(-1); }
+                accept
+            } else if event.text == Key.LeftArrow || event.text == Key.RightArrow {
+                accept
+            } else if event.text == Key.Escape && root.expanded {
+                root.close-popup();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0px;
+        y: root.height;
+        width: root.width;
+        height: min(root.model.length, 6) * 32px + 4px;
+        close-policy: close-on-click-outside;
+        forward-focus: popup-focus;
+        popup-focus := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.DownArrow { root.move-active(1); accept }
+                else if event.text == Key.UpArrow { root.move-active(-1); accept }
+                else if event.text == Key.Return || event.text == Key.Space { root.choose-active(); accept }
+                else if event.text == Key.Escape { root.close-popup(); accept }
+                else { reject }
+            }
+            focus-changed-event => { root.expanded = self.has-focus; }
+            Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: #211e1b;
+                border-color: #51483f;
+                border-width: 1px;
+                border-radius: 5px;
+                ScrollView {
+                    x: 2px;
+                    y: 2px;
+                    width: parent.width - 4px;
+                    height: parent.height - 4px;
+                    content-y: -max(0, root.active-index - 5) * 32px;
+                    accessible-role: list;
+                    VerticalLayout {
+                        width: parent.width;
+                        alignment: start;
+                        for value[index] in root.model: ArchiveComboBoxRow {
+                            width: parent.width;
+                            value: value;
+                            current-value: root.current-value;
+                            item-index: index;
+                            item-count: root.model.length;
+                            active-index: root.active-index;
+                            sync-generation: root.sync-generation;
+                            matched(index) => {
+                                if !root.value-match-found {
+                                    root.active-index = index;
+                                    root.value-match-found = true;
+                                }
+                            }
+                            activated(index) => {
+                                root.active-index = index;
+                                root.choose-active();
+                                focus-scope.focus();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SeekSlider {
+    in-out property <float> value: minimum;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <float> keyboard-step: root.step;
+    in property <bool> enabled: true;
+    in property <int> current-track-id: -1;
+    in property <string> current-load-generation: "0";
+    in property <string> seek-label: "Seek playback position";
+    private property <bool> dragging: false;
+    private property <int> gesture-track-id: -1;
+    private property <string> gesture-load-generation: "0";
+    private property <length> pointer-start-x: 0px;
+    private property <float> pointer-start-value: 0;
+    private property <float> progress: root.maximum > root.minimum
+        ? clamp((root.value - root.minimum) / (root.maximum - root.minimum), 0.0, 1.0)
+        : 0.0;
+    private property <length> handle-center-x: 10px + root.progress * max(0px, root.width - 20px);
+
+    callback changed(value: float, track-id: int, load-generation: string);
+    callback released(value: float, track-id: int, load-generation: string);
+    callback cancelled();
+
+    horizontal-stretch: 1;
+    min-height: 24px;
+    accessible-role: slider;
+    accessible-label: root.seek-label;
+    accessible-enabled: root.enabled;
+    accessible-orientation: Orientation.horizontal;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: min(root.step, max((root.maximum - root.minimum) / 100, 0.01));
+    forward-focus: focus-scope;
+
+    changed enabled => {
+        if (!root.enabled && root.dragging) {
+            root.cancel-gesture();
+        }
+    }
+
+    function capture-gesture() {
+        root.gesture-track-id = root.current-track-id;
+        root.gesture-load-generation = root.current-load-generation;
+        root.dragging = true;
+    }
+
+    function update-value(next-value: float) {
+        let clamped = max(root.minimum, min(root.maximum, next-value));
+        if (root.value != clamped) {
+            root.value = clamped;
+            root.changed(root.value, root.gesture-track-id, root.gesture-load-generation);
+        }
+    }
+
+    function value-at-position(position: length) -> float {
+        let travel = max(0px, root.width - 20px);
+        if (travel <= 0px || root.maximum <= root.minimum) {
+            root.minimum
+        } else {
+            root.minimum + clamp((position - 10px) / travel, 0.0, 1.0) * (root.maximum - root.minimum)
+        }
+    }
+
+    function value-at-delta(delta: length) -> float {
+        let travel = max(0px, root.width - 20px);
+        if (travel <= 0px || root.maximum <= root.minimum) {
+            root.minimum
+        } else {
+            root.pointer-start-value + delta * (root.maximum - root.minimum) / travel
+        }
+    }
+
+    function commit-gesture() {
+        if (root.dragging) {
+            root.released(root.value, root.gesture-track-id, root.gesture-load-generation);
+            root.dragging = false;
+            root.gesture-track-id = -1;
+            root.gesture-load-generation = "0";
+            root.pointer-start-x = 0px;
+            root.pointer-start-value = root.value;
+        }
+    }
+
+    function cancel-gesture() {
+        if (root.dragging) {
+            root.dragging = false;
+            root.gesture-track-id = -1;
+            root.gesture-load-generation = "0";
+            root.pointer-start-x = 0px;
+            root.pointer-start-value = root.value;
+            root.cancelled();
+        }
+    }
+
+    accessible-action-set-value(value) => {
+        if (value.is-float()) {
+            root.capture-gesture();
+            root.update-value(value.to-float());
+            root.commit-gesture();
+        }
+    }
+    accessible-action-increment => {
+        root.capture-gesture();
+        root.update-value(root.value + root.step);
+        root.commit-gesture();
+    }
+    accessible-action-decrement => {
+        root.capture-gesture();
+        root.update-value(root.value - root.step);
+        root.commit-gesture();
+    }
+
+    rail := Rectangle {
+        x: 10px;
+        y: (parent.height - 4px) / 2;
+        width: max(0px, parent.width - 20px);
+        height: 4px;
+        background: #39332e;
+        border-radius: 2px;
+    }
+
+    fill := Rectangle {
+        x: 10px;
+        y: rail.y;
+        width: max(0px, root.handle-center-x - 10px);
+        height: rail.height;
+        background: #f46b32;
+        border-radius: rail.border-radius;
+    }
+
+    handle := Rectangle {
+        x: root.handle-center-x - 10px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        background: #f46b32;
+        border-color: #ffffff;
+        border-width: 1px;
+        border-radius: 10px;
+
+        inner := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 8px;
+            height: 8px;
+            background: #ffffff;
+            border-radius: 4px;
+        }
+    }
+
+    focus-ring := Rectangle {
+        x: handle.x - 3px;
+        y: handle.y - 3px;
+        width: handle.width + 6px;
+        height: handle.height + 6px;
+        background: transparent;
+        border-color: #f46b32;
+        border-width: focus-scope.has-focus ? 2px : 0px;
+        border-radius: 13px;
+    }
+
+    focus-scope := FocusScope {
+        width: 0px;
+        height: 0px;
+        enabled: root.enabled;
+
+        changed has-focus => {
+            if (!self.has-focus) {
+                root.cancel-gesture();
+            }
+        }
+
+        key-pressed(event) => {
+            if (!root.enabled || root.step <= 0) {
+                return reject;
+            }
+
+            if (event.modifiers.control && (event.text == Key.LeftArrow || event.text == Key.RightArrow)) {
+                return reject;
+            }
+
+            if (event.text == Key.RightArrow || event.text == Key.UpArrow) {
+                if (!root.dragging) { root.capture-gesture(); }
+                root.update-value(root.value + root.keyboard-step);
+                return accept;
+            } else if (event.text == Key.LeftArrow || event.text == Key.DownArrow) {
+                if (!root.dragging) { root.capture-gesture(); }
+                root.update-value(root.value - root.keyboard-step);
+                return accept;
+            } else if (event.text == Key.Home) {
+                if (!root.dragging) { root.capture-gesture(); }
+                root.update-value(root.minimum);
+                return accept;
+            } else if (event.text == Key.End) {
+                if (!root.dragging) { root.capture-gesture(); }
+                root.update-value(root.maximum);
+                return accept;
+            }
+
+            reject
+        }
+
+        key-released(event) => {
+            if (root.dragging && (event.text == Key.RightArrow || event.text == Key.UpArrow
+                || event.text == Key.LeftArrow || event.text == Key.DownArrow
+                || event.text == Key.Home || event.text == Key.End)) {
+                root.commit-gesture();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    touch-area := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.cancel) {
+                root.cancel-gesture();
+                return;
+            }
+            if (event.button != PointerEventButton.left) {
+                return;
+            }
+            if (event.kind == PointerEventKind.down) {
+                root.capture-gesture();
+                focus-scope.focus();
+                if (self.mouse-x < handle.x || self.mouse-x > handle.x + handle.width) {
+                    root.update-value(root.value-at-position(self.mouse-x));
+                }
+                root.pointer-start-x = self.mouse-x;
+                root.pointer-start-value = root.value;
+            } else if (event.kind == PointerEventKind.up) {
+                if (root.dragging) {
+                    root.update-value(root.value-at-delta(self.mouse-x - root.pointer-start-x));
+                    root.commit-gesture();
+                }
+            }
+        }
+
+        moved => {
+            if (root.dragging) {
+                root.update-value(root.value-at-delta(self.mouse-x - root.pointer-start-x));
+            }
+        }
+    }
 }
 
 export component AppWindow inherits Window {
     title: "VLC Première";
-    width: 1180px;
-    height: 790px;
+    preferred-width: 1440px;
+    preferred-height: 960px;
+    min-width: 900px;
+    min-height: 650px;
     background: #141312;
     default-font-family: "Inter";
     default-font-size: 14px;
 
-    in property <string> current-view: "music";
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    in property <string> current-view: "movies";
+    in property <string> music-section: "albums";
+    in property <string> music-detail-title: "";
+    in property <bool> music-detail-open: false;
     in property <[TrackRow]> tracks: [];
-    in property <[PlaylistRow]> playlists: [];
+    in property <[TrackRow]> movie-episodes: [];
+    in property <[BrowseRow]> music-cards: [];
+    in property <[BrowseRow]> movie-cards: [];
+    in property <[string]> playlist-targets: [];
+    in property <[string]> movie-genres: [];
+    in property <[string]> music-genres: [];
+    in property <[TrackChoice]> audio-tracks: [];
+    in property <[TrackChoice]> subtitle-tracks: [];
+    in property <[TrackChoice]> chapters: [];
+    in property <[QueueRow]> queue-rows: [];
     in property <bool> has-tracks: false;
+    in property <bool> has-movies: false;
+    in property <bool> has-music-cards: false;
+    in property <bool> has-movie-cards: false;
+    in property <bool> playing-video: false;
+    in property <image> video-frame;
+    in property <bool> has-video-frame: false;
+    in property <bool> movie-fullscreen: false;
     in property <bool> has-selection: false;
     in property <bool> has-selected-playlist: false;
-    in property <bool> can-shuffle-selected-playlist: false;
+    in property <bool> can-shuffle-opened-playlist: false;
     in property <int> selected-playlist-id: -1;
-    in property <string> selected-playlist-order: "Select a playlist to view its track order.";
+    in-out property <string> selected-playlist-name: "";
+    in property <string> opened-playlist-name: "";
+    in property <int> opened-playlist-id: -1;
     in-out property <bool> select-all-checked: false;
     in property <bool> select-all-enabled: false;
     in property <int> selected-count: 0;
     in property <int> visible-count: 0;
+    in property <int> track-result-count: 0;
+    in property <int> page-index: 0;
+    in property <int> page-count: 1;
     in-out property <string> search-query: "";
     in-out property <string> new-playlist-name: "";
+    in-out property <bool> allow-playlist-duplicates: false;
     in property <bool> runtime-ready: false;
     in property <bool> runtime-available: false;
     in property <string> runtime-message: "Looking for libVLC 3…";
+    in property <string> library-status: "";
+    in property <string> app-version: "";
     in property <bool> has-current-track: false;
     in property <string> current-title: "No track selected";
     in property <string> player-state: "Ready";
     in property <string> player-time: "0:00";
     in property <string> player-duration: "0:00";
+    in-out property <float> player-position-ms: 0;
+    in property <float> player-duration-ms: 1;
+    in-out property <float> player-volume: 100;
+    in property <string> player-volume-label: "100%";
+    in-out property <float> playback-rate: 1;
+    in property <string> playback-rate-label: "1.00×";
     in property <string> queue-position: "No queue";
     in property <bool> can-toggle-pause: false;
+    in property <bool> can-stop: false;
+    in property <bool> can-seek: false;
+    in property <bool> can-adjust-playback: false;
     in property <bool> is-paused: false;
+    in property <int> current-track-id: -1;
+    in property <string> current-load-generation: "0";
+    in property <string> repeat-mode: "Off";
+    in-out property <bool> playback-shuffle: false;
+    in property <int> queue-revision: 0;
+    in-out property <bool> queue-open: false;
+    in-out property <bool> tools-open: false;
+    in property <bool> video-fill: false;
+    in property <string> source-title: "";
+    in property <string> source-path: "";
+    in property <string> source-format: "";
+    in property <string> movie-level: "catalog";
+    in property <string> movie-back-label: "";
+    in property <string> movie-filter: "all";
+    in property <int> movie-count: 0;
+    in property <string> movie-view: "all";
+    in-out property <string> movie-genre: "All genres";
+    in-out property <string> movie-sort: "Recently added";
+    in property <int> movie-library-count: 0;
+    in property <int> saved-movie-count: 0;
+    in property <string> movie-results-heading: "All films";
+    in property <string> movie-results-count: "0 films";
+    in property <int> selected-movie-id: -1;
+    in property <string> selected-movie-title: "";
+    in property <string> selected-movie-progress: "";
+    in property <bool> selected-movie-can-resume: false;
+    in property <bool> selected-movie-has-artwork: false;
+    in property <image> selected-movie-artwork;
+    in property <string> selected-movie-genre: "—";
+    in property <string> selected-movie-year: "—";
+    in property <string> selected-movie-format: "—";
+    in property <string> selected-movie-duration: "—";
+    in property <bool> selected-movie-saved: false;
+    in property <bool> movie-details-open: false;
+    in-out property <string> music-genre: "All genres";
+    in-out property <string> music-sort: "Recently added";
+    in property <string> music-results-heading: "Albums";
+    in property <string> music-results-count: "0 albums";
+    in property <string> artwork-target-title: "";
+    in property <bool> artwork-target-ready: false;
+    in property <bool> artwork-target-missing: false;
+    in property <string> artwork-query: "";
+    in-out property <string> tmdb-token-input: "";
+    in property <bool> tmdb-token-available: false;
+    in property <string> settings-status: "";
+    in property <bool> settings-error: false;
+    in-out property <string> audio-delay-input: "0";
+    in-out property <string> subtitle-delay-input: "0";
+    in-out property <string> jump-time-input: "";
     in property <string> status-message: "";
+    in-out property <bool> adjusting-seek: false;
+    in-out property <string> playlist-rename-input: "";
+    in-out property <bool> confirm-delete-playlist: false;
+    in-out property <bool> adjusting-volume: false;
+    in-out property <bool> adjusting-rate: false;
+    in-out property <bool> about-open: false;
+    in-out property <bool> settings-open: false;
+
+    private property <length> content-gutter: root.width <= 900px ? 28px : root.width <= 1023px ? 32px : min(64px, max(24px, root.width * 0.042));
+    private property <length> content-width: min(root.width, 1600px) - 2 * root.content-gutter;
+    private property <int> poster-columns: root.width >= 1280px ? 6 : root.width >= 1024px ? 5 : root.width > 900px ? 4 : 3;
+    private property <length> poster-card-width: (root.content-width - (root.poster-columns - 1) * 18px) / root.poster-columns;
+
+    changed opened-playlist-id => { root.confirm-delete-playlist = false; }
+    changed music-detail-open => { if (!root.music-detail-open) { root.confirm-delete-playlist = false; } }
+    changed movie-fullscreen => {
+        if (root.movie-fullscreen) {
+            movie-keyboard-scope.focus();
+        }
+    }
 
     callback navigate(string);
-    callback open-audio-files();
-    callback search-changed(string);
-    callback select-all(bool);
-    callback select-playlist(int);
-    callback shuffle-selected-playlist();
+    callback music-section-changed(string);
+    callback back-music-detail();
+    callback open-music-group(int);
+    callback open-playlist(int);
+    callback shuffle-opened-playlist();
+    callback toggle-playlist-entry(int, int, int, int, bool);
+    callback move-playlist-entry(int, int, int, int, int);
+    callback remove-playlist-entry(int, int, int, int);
+    callback playlist-rename-input-changed(string);
+    callback rename-opened-playlist(int, string);
+    callback delete-playlist(int);
+    callback select-target-playlist(string);
     callback create-playlist(string);
     callback playlist-name-changed(string);
-    callback add-selected-to-playlist();
+    callback add-selected-to-playlist(bool);
+    callback create-playlist-from-selection(string, bool);
+    callback select-all(bool);
     callback toggle-track(int, bool);
-    callback play-track(int);
+    callback play-track(int, int);
+    callback play-next-track(int, int);
     callback play-selected();
+    callback play-all-collection();
+    callback previous-page();
+    callback next-page();
+    callback search-changed(string);
+    callback open-audio-files();
+    callback open-movie-files();
+    callback import-folder();
+    callback open-movie-group(int);
+    callback back-movie();
+    callback movie-filter-changed(string);
+    callback movie-view-changed(string);
+    callback movie-genre-changed(string);
+    callback movie-sort-changed(string);
+    callback music-genre-changed(string);
+    callback music-sort-changed(string);
+    callback toggle-saved-movie(int);
+    callback close-movie-details();
+    callback clear-movie-filters();
+    callback clear-music-filters();
+    callback movie-poster-clicked(int);
+    callback select-movie(int);
+    callback play-movie(int, bool);
+    callback exit-movie-fullscreen();
+    callback retry-local-artwork();
+    callback find-online-artwork();
+    callback tmdb-token-input-changed(string);
+    callback save-tmdb-token();
+    callback remove-tmdb-token();
+    callback settings-closed();
     callback previous();
     callback toggle-pause();
     callback next();
+    callback stop();
+    callback seek-changed(float, int, string, bool);
+    callback volume-changed(float, bool);
+    callback playback-rate-changed(float, bool);
+    callback cycle-repeat-mode();
+    callback playback-shuffle-changed(bool);
+    callback select-audio-track(int, int);
+    callback select-subtitle-track(int, int);
+    callback add-subtitle-file();
+    callback audio-delay-changed(string);
+    callback subtitle-delay-changed(string);
+    callback jump-time-changed(string);
+    callback jump-to-time();
+    callback select-chapter(int, int);
+    callback set-video-fill(bool);
+    callback queue-jump(string, int);
+    callback queue-move(string, int, int);
+    callback queue-remove(string, int);
 
-    VerticalLayout {
-        spacing: 0px;
-
-        Rectangle {
-            height: 70px;
-            background: #141312;
-
-            HorizontalLayout {
-                padding-left: 26px;
-                padding-right: 28px;
-                spacing: 16px;
-
-                Text {
-                    text: "PREMIÈRE";
-                    color: #f46b32;
-                    font-family: "Inter";
-                    font-size: 18px;
-                    font-weight: 760;
-                    letter-spacing: 0.5px;
-                    vertical-alignment: center;
-                }
-
-                Rectangle { horizontal-stretch: 1; }
-
-                Text {
-                    text: "LOCAL LIBRARY";
-                    color: #aaa196;
-                    font-family: "Inter";
-                    font-size: 10px;
-                    font-weight: 680;
-                    letter-spacing: 1.4px;
-                    vertical-alignment: center;
-                }
+    forward-focus: movie-keyboard-scope;
+    movie-keyboard-scope := FocusScope {
+        capture-key-pressed(event) => {
+            if (root.settings-open && event.text == Key.Escape) {
+                root.settings-open = false;
+                root.tmdb-token-input = "";
+                root.settings-closed();
+                movie-keyboard-scope.focus();
+                accept
+            } else if (root.movie-details-open && event.text == Key.Escape) {
+                root.close-movie-details();
+                movie-keyboard-scope.focus();
+                accept
+            } else if (root.movie-fullscreen && event.text == Key.Escape) {
+                root.exit-movie-fullscreen();
+                accept
+            } else if (root.about-open && event.text == Key.Escape) {
+                root.about-open = false;
+                movie-keyboard-scope.focus();
+                accept
+            } else {
+                reject
+            }
+        }
+        key-pressed(event) => {
+            if root.settings-open || root.about-open || root.movie-details-open || !root.has-current-track {
+                reject
+            } else if event.modifiers.control && event.text == Key.LeftArrow {
+                root.previous();
+                accept
+            } else if event.modifiers.control && event.text == Key.RightArrow {
+                root.next();
+                accept
+            } else if event.text == Key.Space && root.can-toggle-pause {
+                root.toggle-pause();
+                accept
+            } else if event.text == Key.LeftArrow && root.can-seek {
+                root.seek-changed(max(0.0, root.player-position-ms - 10000.0), root.current-track-id, root.current-load-generation, true);
+                accept
+            } else if event.text == Key.RightArrow && root.can-seek {
+                root.seek-changed(min(root.player-duration-ms, root.player-position-ms + 10000.0), root.current-track-id, root.current-load-generation, true);
+                accept
+            } else {
+                reject
             }
         }
 
-        Rectangle {
-            background: #141312;
-            vertical-stretch: 1;
+        VerticalLayout {
+            spacing: 0px;
 
-            VerticalLayout {
-                padding-left: 34px;
-                padding-right: 34px;
-                padding-top: 22px;
-                padding-bottom: 18px;
-                spacing: 14px;
-
+            if !root.movie-fullscreen: Rectangle {
+                height: 66px;
+                background: #141312;
                 HorizontalLayout {
-                    height: 42px;
-                    spacing: 8px;
-
-                    Button {
-                        text: "Movies";
-                        primary: root.current-view == "movies";
-                        clicked => root.navigate("movies");
-                    }
-
-                    Button {
-                        text: "Music";
-                        primary: root.current-view == "music";
-                        clicked => root.navigate("music");
-                    }
-
-                    Rectangle { horizontal-stretch: 1; }
-                }
-
-                HorizontalLayout {
-                    height: 56px;
-                    spacing: 16px;
-
-                    VerticalLayout {
-                        spacing: 4px;
-
-                        Text {
-                            text: "YOUR COLLECTION";
-                            color: #f46b32;
-                            font-size: 10px;
-                            font-weight: 700;
-                            letter-spacing: 1.3px;
-                        }
-
-                        Text {
-                            text: root.current-view == "music" ? "Music" : "Movies";
-                            color: #e7ddcc;
-                            font-family: "Inter";
-                            font-size: 32px;
-                            font-weight: 720;
-                        }
-                    }
-
-                    Rectangle { horizontal-stretch: 1; }
-
-                    if root.current-view == "music": Button {
-                        text: "Add local audio";
-                        primary: true;
-                        clicked => root.open-audio-files();
-                    }
-                }
-
-                if root.current-view == "music": Rectangle {
-                    height: 204px;
-                    background: #211e1b;
-                    border-color: #3b3631;
-                    border-width: 1px;
-                    border-radius: 8px;
-
-                    VerticalLayout {
-                        padding-left: 14px;
-                        padding-right: 14px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 7px;
-
-                        HorizontalLayout {
-                            height: 36px;
-                            spacing: 10px;
-
-                            Text {
-                                text: "PLAYLISTS";
-                                color: #e7ddcc;
-                                font-size: 13px;
-                                font-weight: 680;
-                                vertical-alignment: center;
-                            }
-
-                            Rectangle { horizontal-stretch: 1; }
-
-                            LineEdit {
-                                width: 220px;
-                                text <=> root.new-playlist-name;
-                                placeholder-text: "New playlist name";
-                                accessible-label: "New playlist name";
-                                edited(text) => root.playlist-name-changed(text);
-                            }
-
-                            Button {
-                                text: "Create";
-                                enabled: root.new-playlist-name != "";
-                                clicked => root.create-playlist(root.new-playlist-name);
-                            }
-                        }
-
-                        ListView {
-                            height: 56px;
-                            accessible-role: list;
-
-                            for playlist in root.playlists: Rectangle {
-                                height: 38px;
-
-                                Button {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    text: playlist.name + "    ·    " + playlist.track-count + " tracks";
-                                    primary: playlist.id == root.selected-playlist-id;
-                                    accessible-label: "Select playlist " + playlist.name;
-                                    clicked => root.select-playlist(playlist.id);
-                                }
-                            }
-                        }
-
-                        Text {
-                            height: 24px;
-                            text: root.selected-playlist-order;
-                            color: #aaa196;
-                            font-size: 11px;
-                            overflow: elide;
-                            vertical-alignment: center;
-                        }
-
-                        HorizontalLayout {
-                            height: 34px;
-                            spacing: 10px;
-
-                            Text {
-                                text: "Playlists stay in this session only.";
-                                color: #aaa196;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                            }
-
-                            Rectangle { horizontal-stretch: 1; }
-
-                            Button {
-                                text: "Shuffle order";
-                                enabled: root.can-shuffle-selected-playlist;
-                                clicked => root.shuffle-selected-playlist();
-                            }
-
-                            Button {
-                                text: "Add checked tracks";
-                                enabled: root.has-selection && root.has-selected-playlist;
-                                primary: true;
-                                clicked => root.add-selected-to-playlist();
-                            }
-                        }
-                    }
-                }
-
-                if root.runtime-ready && !root.runtime-available: Rectangle {
-                    background: #2b211c;
-                    border-color: #5a392a;
-                    border-width: 1px;
-                    border-radius: 6px;
-                    height: 58px;
-
-                    Text {
-                        x: 14px;
-                        y: 8px;
-                        width: parent.width - 28px;
-                        height: parent.height - 16px;
-                        color: #e7ddcc;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        text: root.runtime-message;
-                        vertical-alignment: center;
-                    }
-                }
-
-                if root.current-view == "music" && root.has-tracks: HorizontalLayout {
-                    height: 48px;
+                    x: root.width > 1600px ? (root.width - 1600px) / 2 : 0px;
+                    width: min(root.width, 1600px);
+                    y: (parent.height - self.height) / 2;
+                    height: 44px;
+                    padding-left: root.content-gutter;
+                    padding-right: root.content-gutter;
                     spacing: 12px;
-
-                    LineEdit {
-                        text <=> root.search-query;
-                        placeholder-text: "Search tracks or filenames";
-                        edited(text) => root.search-changed(text);
-                        horizontal-stretch: 1;
-                        accessible-label: "Search local audio tracks";
-                    }
-
-                    CheckBox {
-                        text: "Select all";
-                        checked <=> root.select-all-checked;
-                        enabled: root.select-all-enabled;
-                        toggled => root.select-all(self.checked);
-                    }
-
-                    Text {
-                        text: root.selected-count + " selected · " + root.visible-count + " shown";
-                        color: #aaa196;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-
-                    Button {
-                        text: "Play selected";
-                        primary: true;
-                        enabled: root.has-selection;
-                        clicked => root.play-selected();
-                    }
-                }
-
-                Rectangle {
-                    height: 1px;
-                    background: #3b3631;
-                }
-
-                if root.current-view == "music" && root.has-tracks: VerticalLayout {
-                        vertical-stretch: 1;
-                        spacing: 8px;
-
+                    Rectangle {
+                        width: 360px;
+                        height: 44px;
+                        background: #211e1b;
+                        border-color: #3b3631;
+                        border-width: 1px;
+                        border-radius: 7px;
                         HorizontalLayout {
-                            height: 26px;
-                            padding-left: 14px;
-                            padding-right: 14px;
-                            spacing: 12px;
-
-                            Text { text: "TRACK"; color: #8f877d; font-size: 9px; font-weight: 700; letter-spacing: 1.1px; vertical-alignment: center; }
-                            Rectangle { horizontal-stretch: 1; }
-                            Text { text: "SOURCE"; color: #8f877d; font-size: 9px; font-weight: 700; letter-spacing: 1.1px; vertical-alignment: center; }
-                        }
-
-                        ListView {
-                            vertical-stretch: 1;
-                            accessible-role: list;
-
-                            for track[index] in root.tracks: Rectangle {
-                                height: 62px;
-                                background: Math.mod(index, 2) == 0 ? #1b1917 : #171614;
-                                border-radius: 4px;
-                                accessible-role: list-item;
-
-                                HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 12px;
-                                    padding-top: 6px;
-                                    padding-bottom: 6px;
-                                    spacing: 10px;
-
-                                    CheckBox {
-                                        width: 30px;
-                                        text: "";
-                                        checked: track.selected;
-                                        accessible-label: "Select " + track.title;
-                                        toggled => root.toggle-track(track.id, self.checked);
-                                    }
-
-                                    Button {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        text: track.title + "    ·    " + track.detail;
-                                        accessible-label: "Play " + track.title;
-                                        clicked => root.play-track(track.id);
-                                    }
-                                }
+                            padding: 3px;
+                            spacing: 4px;
+                            ArchiveButton {
+                                width: 174px;
+                                height: 36px;
+                                text: "Movies";
+                                primary: root.current-view == "movies";
+                                clicked => root.navigate("movies");
                             }
-                        }
-                    }
-
-                if root.current-view == "music" && !root.has-tracks: Rectangle {
-                        vertical-stretch: 1;
-                        background: #1b1917;
-                        border-color: #3b3631;
-                        border-width: 1px;
-                        border-radius: 8px;
-
-                        VerticalLayout {
-                            x: 30px;
-                            y: 28px;
-                            width: parent.width - 60px;
-                            height: parent.height - 56px;
-                            spacing: 14px;
-
-                            Text {
-                                text: "Start with your own music";
-                                color: #e7ddcc;
-                                font-size: 23px;
-                                font-weight: 700;
-                            }
-
-                            Text {
-                                text: "Choose local audio files to build this library. Track titles use their filenames until local metadata support is added.";
-                                color: #aaa196;
-                                font-size: 13px;
-                                wrap: word-wrap;
-                                max-width: 520px;
-                            }
-
-                            Button {
-                                text: "Choose audio files";
-                                primary: true;
-                                clicked => root.open-audio-files();
-                            }
-                        }
-                    }
-
-                if root.current-view == "movies": Rectangle {
-                        vertical-stretch: 1;
-                        background: #1b1917;
-                        border-color: #3b3631;
-                        border-width: 1px;
-                        border-radius: 8px;
-
-                        VerticalLayout {
-                            x: 30px;
-                            y: 28px;
-                            width: parent.width - 60px;
-                            height: parent.height - 56px;
-                            spacing: 12px;
-
-                            Text {
-                                text: "Movie browsing is not part of this audio slice";
-                                color: #e7ddcc;
-                                font-size: 21px;
-                                font-weight: 700;
-                                wrap: word-wrap;
-                            }
-
-                            Text {
-                                text: "Your current audio queue keeps playing while you browse this view.";
-                                color: #aaa196;
-                                font-size: 13px;
-                                wrap: word-wrap;
-                            }
-
-                            Button {
-                                text: "Return to Music";
+                            ArchiveButton {
+                                width: 174px;
+                                height: 36px;
+                                text: "Music";
+                                primary: root.current-view == "music";
                                 clicked => root.navigate("music");
                             }
                         }
                     }
-
-                if root.status-message != "": Text {
-                        text: root.status-message;
-                        color: #e7ddcc;
-                        font-size: 12px;
-                        wrap: word-wrap;
+                    Rectangle { horizontal-stretch: 1; }
+                    ArchiveButton {
+                        text: root.queue-open ? "Hide queue" : "Queue";
+                        clicked => { root.queue-open = !root.queue-open; }
                     }
+                    ArchiveButton {
+                        text: "☷ Tools";
+                        style: "plain";
+                        enabled: root.has-current-track;
+                        accessible-label: root.tools-open ? "Hide player tools" : "Show player tools";
+                        clicked => { root.tools-open = !root.tools-open; }
+                    }
+                    ArchiveButton {
+                        text: "Options";
+                        style: "plain";
+                        accessible-label: "Open artwork options";
+                        clicked => {
+                            root.tmdb-token-input = "";
+                            root.settings-open = true;
+                        }
+                    }
+                    ArchiveButton {
+                        text: "About";
+                        style: "plain";
+                        clicked => { root.about-open = true; }
+                    }
+                }
             }
-        }
 
-        Rectangle {
-            height: 104px;
-            background: #211e1b;
-            border-color: #3b3631;
-            border-width: 1px;
-
-            HorizontalLayout {
-                padding-left: 24px;
-                padding-right: 24px;
-                padding-top: 14px;
-                padding-bottom: 14px;
-                spacing: 20px;
-
+            if !root.movie-fullscreen: Rectangle {
+                background: #141312;
+                vertical-stretch: 1;
                 VerticalLayout {
-                    spacing: 5px;
+                    x: root.width > 1600px ? (root.width - 1600px) / 2 : 0px;
+                    width: min(root.width, 1600px);
+                    padding-left: root.content-gutter;
+                    padding-right: root.content-gutter;
+                    padding-top: 12px;
+                    padding-bottom: 10px;
+                    spacing: 8px;
 
-                    Text {
-                        text: "NOW PLAYING";
-                        color: #f46b32;
-                        font-size: 9px;
-                        font-weight: 700;
-                        letter-spacing: 1.4px;
+                    HorizontalLayout {
+                        height: 86px;
+                        spacing: 18px;
+                        VerticalLayout {
+                            vertical-stretch: 1;
+                            spacing: 1px;
+                            Text {
+                                text: root.current-view == "movies" ? "YOUR FILMS, IN ONE PLACE" : "YOUR MUSIC, IN ONE PLACE";
+                                color: #f46b32;
+                                font-size: 10px;
+                                font-weight: 700;
+                                letter-spacing: 1.4px;
+                            }
+                            Text {
+                                text: root.current-view == "movies" ? "Movies" : "Music";
+                                color: #ffffff;
+                                font-size: 34px;
+                                font-weight: 740;
+                            }
+                            Text {
+                                text: root.current-view == "movies" ? "A clear, browsable shelf for the films already in your library." : "Browse artwork-led albums, artists and genres, or collect songs into playlists from your local library.";
+                                color: #ffffffB3;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        VerticalLayout {
+                            width: min(350px, max(230px, parent.width * 0.29));
+                            spacing: 4px;
+                            Text { text: root.current-view == "movies" ? "Search your films" : "Search your music"; color: #ffffffB3; font-size: 10px; font-weight: 700; }
+                            ArchiveLineEdit {
+                                height: 38px;
+                                text <=> root.search-query;
+                                placeholder-text: root.current-view == "movies" ? "Title, year, genre or story" : "Album, artist, track or genre";
+                                edited(text) => root.search-changed(text);
+                                accessible-label: "Search the current collection";
+                            }
+                        }
                     }
 
-                    Text {
-                        text: root.current-title;
-                        color: #e7ddcc;
-                        font-size: 16px;
-                        font-weight: 650;
+                    Rectangle { height: 1px; background: #3b3631; }
+
+                    if root.library-status != "": Text {
+                        height: 14px;
+                        text: root.library-status;
+                        color: #ffffffB3;
+                        font-size: 9px;
                         overflow: elide;
                     }
 
-                    Text {
-                        text: root.player-state + "  ·  " + root.queue-position;
-                        color: #aaa196;
-                        font-size: 11px;
+                    if root.current-view == "music": HorizontalLayout {
+                        height: 36px;
+                        spacing: 2px;
+                        ArchiveButton { text: "Albums"; style: "tab"; primary: root.music-section == "albums"; clicked => root.music-section-changed("albums"); }
+                        ArchiveButton { text: "Artists"; style: "tab"; primary: root.music-section == "artists"; clicked => root.music-section-changed("artists"); }
+                        ArchiveButton { text: "Tracks"; style: "tab"; primary: root.music-section == "tracks"; clicked => root.music-section-changed("tracks"); }
+                        ArchiveButton { text: "Genres"; style: "tab"; primary: root.music-section == "genres"; clicked => root.music-section-changed("genres"); }
+                        ArchiveButton { text: "Playlists"; style: "tab"; primary: root.music-section == "playlists"; clicked => root.music-section-changed("playlists"); }
+                        Rectangle { horizontal-stretch: 1; }
+                        ArchiveButton { text: "Import folder"; clicked => root.import-folder(); }
+                        ArchiveButton { text: "Add audio files"; primary: true; clicked => root.open-audio-files(); }
+                    }
+
+                    if root.current-view == "movies": HorizontalLayout {
+                        height: 34px;
+                        spacing: 8px;
+                        if root.movie-back-label != "": ArchiveButton { text: root.movie-back-label; clicked => root.back-movie(); }
+                        ArchiveButton { text: "All films  " + root.movie-library-count; style: "tab"; primary: root.movie-view == "all"; clicked => root.movie-view-changed("all"); }
+                        ArchiveButton { text: "My List  " + root.saved-movie-count; style: "tab"; primary: root.movie-view == "my-list"; clicked => root.movie-view-changed("my-list"); }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    if root.current-view == "movies": HorizontalLayout {
+                        height: 36px;
+                        spacing: 8px;
+                        Text { text: "GENRE"; color: #ffffffB3; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                        ArchiveComboBox {
+                            width: min(220px, max(150px, parent.width * 0.22));
+                            model: root.movie-genres;
+                            current-value <=> root.movie-genre;
+                            accessible-label: "Filter movies by genre";
+                            selected(value) => root.movie-genre-changed(value);
+                        }
+                        Text { text: "SORT"; color: #ffffffB3; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                        ArchiveComboBox {
+                            width: min(190px, max(150px, parent.width * 0.18));
+                            model: ["Recently added", "Title A–Z", "Year newest", "Year oldest"];
+                            current-value <=> root.movie-sort;
+                            accessible-label: "Sort movies";
+                            selected(value) => root.movie-sort-changed(value);
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.search-query != "" || root.movie-view != "all" || root.movie-genre != "All genres" || root.movie-filter != "all" || root.movie-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-movie-filters(); }
+                    }
+
+                    if root.current-view == "music": HorizontalLayout {
+                        height: 36px;
+                        spacing: 8px;
+                        Text { text: "GENRE"; color: #ffffffB3; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                        ArchiveComboBox {
+                            width: min(190px, max(150px, parent.width * 0.18));
+                            model: root.music-genres;
+                            current-value <=> root.music-genre;
+                            accessible-label: "Filter music by genre";
+                            selected(value) => root.music-genre-changed(value);
+                        }
+                        Text { text: "SORT"; color: #ffffffB3; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                        ArchiveComboBox {
+                            width: min(185px, max(150px, parent.width * 0.18));
+                            model: ["Recently added", "Title A–Z", "Artist A–Z"];
+                            current-value <=> root.music-sort;
+                            accessible-label: "Sort music";
+                            selected(value) => root.music-sort-changed(value);
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.search-query != "" || root.music-genre != "All genres" || root.music-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); }
+                    }
+
+                    if root.current-view == "movies": HorizontalLayout {
+                        height: 30px;
+                        spacing: 4px;
+                        Text { text: root.movie-results-heading; color: #ffffff; font-size: 16px; font-weight: 680; vertical-alignment: center; }
+                        Text { text: root.movie-results-count; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    if root.current-view == "movies": HorizontalLayout {
+                        height: 30px;
+                        spacing: 4px;
+                        ArchiveButton { text: "All"; style: "chip"; primary: root.movie-filter == "all"; clicked => root.movie-filter-changed("all"); }
+                        ArchiveButton { text: "Continue"; style: "chip"; primary: root.movie-filter == "continue"; clicked => root.movie-filter-changed("continue"); }
+                        ArchiveButton { text: "Completed"; style: "chip"; primary: root.movie-filter == "completed"; clicked => root.movie-filter-changed("completed"); }
+                        ArchiveButton { text: "Unwatched"; style: "chip"; primary: root.movie-filter == "unwatched"; clicked => root.movie-filter-changed("unwatched"); }
+                        Rectangle { horizontal-stretch: 1; }
+                        ArchiveButton { text: "Import folder"; clicked => root.import-folder(); }
+                        ArchiveButton { text: "Add movies"; primary: true; clicked => root.open-movie-files(); }
+                    }
+
+                    if root.current-view == "music": HorizontalLayout {
+                        height: 30px;
+                        spacing: 8px;
+                        Text { text: root.music-results-heading; color: #ffffff; font-size: 16px; font-weight: 680; vertical-alignment: center; }
+                        Text { text: root.music-results-count; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    if root.current-view == "music" && (root.music-section == "tracks" || root.music-detail-open): HorizontalLayout {
+                        height: 28px;
+                        spacing: 10px;
+                        ArchiveCheckBox {
+                            text: "Select all shown";
+                            checked <=> root.select-all-checked;
+                            enabled: root.select-all-enabled;
+                            toggled => root.select-all(self.checked);
+                        }
+                        Text {
+                            text: root.selected-count + " selected · " + root.visible-count + " shown";
+                            color: #ffffffB3;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    if root.current-view == "music" && root.music-section == "playlists" && !root.music-detail-open: HorizontalLayout {
+                        height: 36px;
+                        spacing: 8px;
+                        Text { text: "NEW PLAYLIST"; color: #ffffffB3; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                        ArchiveLineEdit {
+                            width: 260px;
+                            text <=> root.new-playlist-name;
+                            placeholder-text: "Playlist name";
+                            accessible-label: "New playlist name";
+                            edited(text) => root.playlist-name-changed(text);
+                            accepted(text) => root.create-playlist(text);
+                        }
+                        ArchiveButton {
+                            text: "Create playlist";
+                            enabled: root.new-playlist-name != "";
+                            primary: true;
+                            clicked => root.create-playlist(root.new-playlist-name);
+                        }
+                    }
+
+                    if root.current-view == "music" && root.has-selection && (root.music-section == "tracks" || root.music-detail-open): HorizontalLayout {
+                        height: root.width > 1150px ? 40px : 76px;
+                        VerticalLayout {
+                            spacing: 4px;
+                            HorizontalLayout {
+                                height: 36px;
+                                spacing: 8px;
+                                ArchiveComboBox {
+                                    width: 210px;
+                                    model: root.playlist-targets;
+                                    current-value <=> root.selected-playlist-name;
+                                    enabled: root.playlist-targets.length > 0;
+                                    accessible-label: "Playlist receiving checked tracks";
+                                    selected(value) => root.select-target-playlist(value);
+                                }
+                                ArchiveButton { text: "Play selected"; primary: true; clicked => root.play-selected(); }
+                                ArchiveButton { text: "Add checked"; enabled: root.has-selected-playlist; clicked => root.add-selected-to-playlist(root.allow-playlist-duplicates); }
+                                ArchiveCheckBox { text: "Allow duplicates"; checked <=> root.allow-playlist-duplicates; accessible-label: "Allow repeated tracks in this playlist"; }
+                                if root.width > 1150px: ArchiveLineEdit {
+                                    width: 180px;
+                                    text <=> root.new-playlist-name;
+                                    placeholder-text: "New playlist name";
+                                    accessible-label: "Name for a playlist from selected tracks";
+                                    edited(text) => root.playlist-name-changed(text);
+                                    accepted(text) => root.create-playlist-from-selection(text, root.allow-playlist-duplicates);
+                                }
+                                if root.width > 1150px: ArchiveButton {
+                                    text: "New playlist";
+                                    enabled: root.new-playlist-name != "";
+                                    accessible-label: "Create a playlist from the selected tracks";
+                                    clicked => root.create-playlist-from-selection(root.new-playlist-name, root.allow-playlist-duplicates);
+                                }
+                            }
+                            if root.width <= 1150px: HorizontalLayout {
+                                height: 36px;
+                                spacing: 8px;
+                                ArchiveLineEdit {
+                                    horizontal-stretch: 1;
+                                    text <=> root.new-playlist-name;
+                                    placeholder-text: "New playlist name";
+                                    accessible-label: "Name for a playlist from selected tracks";
+                                    edited(text) => root.playlist-name-changed(text);
+                                    accepted(text) => root.create-playlist-from-selection(text, root.allow-playlist-duplicates);
+                                }
+                                ArchiveButton {
+                                    text: "New playlist";
+                                    enabled: root.new-playlist-name != "";
+                                    accessible-label: "Create a playlist from the selected tracks";
+                                    clicked => root.create-playlist-from-selection(root.new-playlist-name, root.allow-playlist-duplicates);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.runtime-ready && !root.runtime-available: Rectangle {
+                        height: 48px;
+                        background: #2b211c;
+                        border-color: #5a392a;
+                        border-width: 1px;
+                        border-radius: 6px;
+                        Text {
+                            x: 12px;
+                            y: 6px;
+                            width: parent.width - 24px;
+                            height: parent.height - 12px;
+                            color: #ffffff;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                            text: root.runtime-message;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if root.current-view == "music" && !root.has-tracks: Rectangle {
+                        vertical-stretch: 1;
+                        background: #1b1917;
+                        border-color: #3b3631;
+                        border-width: 1px;
+                        border-radius: 8px;
+                        VerticalLayout {
+                            padding: 28px;
+                            spacing: 12px;
+                            Text { text: "Your music library is empty"; color: #ffffff; font-size: 22px; font-weight: 700; }
+                            Text { text: "Import a folder or add local audio files. Tags and nearby artwork are read on this device."; color: #ffffffB3; wrap: word-wrap; }
+                            HorizontalLayout {
+                                height: 36px;
+                                ArchiveButton { width: 220px; height: 36px; text: "Add local audio"; primary: true; clicked => root.open-audio-files(); }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+
+                    if root.current-view == "music" && root.has-tracks && root.music-section != "tracks" && !root.music-detail-open && root.has-music-cards: ScrollView {
+                        vertical-stretch: 1;
+                        content-width: self.width;
+                        FlexboxLayout {
+                            width: parent.width;
+                            spacing: 18px;
+                            flex-direction: row;
+                            flex-wrap: wrap;
+                            for card in root.music-cards: VerticalLayout {
+                                width: root.poster-card-width;
+                                height: root.poster-card-width + 64px;
+                                spacing: 4px;
+                                Rectangle {
+                                    width: parent.width;
+                                    height: parent.width;
+                                    clip: true;
+                                    if card.has-artwork: Image { width: parent.width; height: parent.height; source: card.artwork; image-fit: cover; accessible-label: card.title + " artwork"; }
+                                    if !card.has-artwork: Rectangle {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        background: #302820;
+                                        Text { text: card.monogram; color: #f46b32; font-size: 42px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    TouchArea {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        accessible-role: button;
+                                        accessible-label: (card.kind == "playlist" ? "Open playlist " : "Open ") + card.title;
+                                        clicked => {
+                                            if (card.kind == "playlist") { root.open-playlist(card.id); }
+                                            else { root.open-music-group(card.id); }
+                                        }
+                                    }
+                                }
+                                ArchiveButton {
+                                    width: parent.width;
+                                    height: 22px;
+                                    style: "plain";
+                                    text: card.title;
+                                    accessible-label: "Open " + card.title;
+                                    clicked => {
+                                        if (card.kind == "playlist") { root.open-playlist(card.id); }
+                                        else { root.open-music-group(card.id); }
+                                    }
+                                }
+                                Text { text: card.detail; color: #ffffffB3; font-size: 10px; overflow: elide; }
+                                if card.genre != "": Text { text: card.genre; color: #aaa196; font-size: 9px; overflow: elide; }
+                            }
+                        }
+                    }
+
+                    if root.current-view == "music" && root.music-section != "tracks" && !root.music-detail-open && !root.has-music-cards && root.has-tracks: VerticalLayout {
+                        vertical-stretch: 1;
+                        alignment: center;
+                        spacing: 8px;
+                        Text { text: "No matching items in this view."; color: #ffffffB3; horizontal-alignment: center; }
+                        if root.search-query != "" || root.music-genre != "All genres" || root.music-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); }
+                    }
+
+                    if root.current-view == "music" && (root.music-section == "tracks" || root.music-detail-open) && root.visible-count > 0: ListView {
+                        vertical-stretch: 1;
+                        accessible-role: list;
+                        for track in root.tracks: Rectangle {
+                            height: 58px;
+                            background: track.selected ? #2a211b : #1b1917;
+                            border-radius: 4px;
+                            accessible-role: list-item;
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                accessible-role: button;
+                                accessible-label: "Play " + track.title;
+                                clicked => root.play-track(track.id, track.index);
+                            }
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 9px;
+                                ArchiveCheckBox {
+                                    width: 28px;
+                                    text: "";
+                                    checked: track.selected;
+                                    accessible-label: "Select " + track.title;
+                                    toggled => {
+                                        if root.music-section == "playlists" && root.music-detail-open {
+                                            root.toggle-playlist-entry(root.opened-playlist-id, track.index, track.playlist-position, track.id, self.checked);
+                                        } else {
+                                            root.toggle-track(track.id, self.checked);
+                                        }
+                                    }
+                                }
+                                if track.has-artwork: Image { width: 40px; height: 40px; source: track.artwork; image-fit: cover; accessible-label: track.title + " artwork"; }
+                                if !track.has-artwork: Rectangle { width: 40px; height: 40px; background: #302820; Text { text: track.monogram; color: #f46b32; horizontal-alignment: center; vertical-alignment: center; font-weight: 700; } }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 1px;
+                                    ArchiveButton {
+                                        horizontal-stretch: 1;
+                                        height: 24px;
+                                        style: "plain";
+                                        text: track.title;
+                                        accessible-label: "Play " + track.title;
+                                        clicked => root.play-track(track.id, track.index);
+                                    }
+                                    Text { text: track.detail; color: #ffffffB3; font-size: 10px; overflow: elide; }
+                                }
+                                Text { width: 110px; text: track.genre; color: #ffffffB3; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                                Text { width: 48px; text: track.duration; color: #ffffffB3; font-size: 10px; horizontal-alignment: right; vertical-alignment: center; }
+                                ArchiveButton {
+                                    text: "Play next";
+                                    style: "plain";
+                                    height: 30px;
+                                    accessible-label: "Play " + track.title + " next";
+                                    enabled: root.runtime-available;
+                                    clicked => root.play-next-track(track.id, track.index);
+                                }
+                                if root.music-section == "playlists" && root.music-detail-open: HorizontalLayout {
+                                    spacing: 3px;
+                                    ArchiveButton {
+                                        text: "Up";
+                                        enabled: track.index > 0;
+                                        accessible-label: "Move " + track.title + " up in playlist";
+                                        clicked => root.move-playlist-entry(root.opened-playlist-id, track.index, track.playlist-position, track.id, -1);
+                                    }
+                                    ArchiveButton {
+                                        text: "Down";
+                                        enabled: track.index + 1 < root.track-result-count;
+                                        accessible-label: "Move " + track.title + " down in playlist";
+                                        clicked => root.move-playlist-entry(root.opened-playlist-id, track.index, track.playlist-position, track.id, 1);
+                                    }
+                                    ArchiveButton {
+                                        text: "Remove";
+                                        accessible-label: "Remove " + track.title + " occurrence from playlist";
+                                        clicked => root.remove-playlist-entry(root.opened-playlist-id, track.index, track.playlist-position, track.id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.current-view == "music" && root.music-section == "playlists" && root.music-detail-open: VerticalLayout {
+                        height: 72px;
+                        spacing: 4px;
+                        HorizontalLayout {
+                            height: 32px;
+                            spacing: 8px;
+                            ArchiveButton { text: "Back to playlists"; clicked => root.back-music-detail(); }
+                            Text { text: root.opened-playlist-name; color: #ffffff; font-weight: 650; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                            ArchiveButton { text: "Play all"; enabled: root.visible-count > 0; primary: true; clicked => root.play-all-collection(); }
+                            ArchiveButton { text: "Shuffle stored order"; enabled: root.can-shuffle-opened-playlist; clicked => root.shuffle-opened-playlist(); }
+                            ArchiveButton {
+                                text: root.confirm-delete-playlist ? "Confirm delete" : "Delete";
+                                accessible-label: root.confirm-delete-playlist ? "Confirm deleting playlist" : "Delete playlist";
+                                clicked => {
+                                    if root.confirm-delete-playlist {
+                                        root.delete-playlist(root.opened-playlist-id);
+                                        root.confirm-delete-playlist = false;
+                                    } else {
+                                        root.confirm-delete-playlist = true;
+                                    }
+                                }
+                            }
+                            if root.confirm-delete-playlist: ArchiveButton {
+                                text: "Cancel";
+                                clicked => { root.confirm-delete-playlist = false; }
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 32px;
+                            spacing: 8px;
+                            Text { text: "Rename"; color: #ffffffB3; vertical-alignment: center; }
+                            ArchiveLineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.playlist-rename-input;
+                                placeholder-text: "Playlist name";
+                                accessible-label: "Rename opened playlist";
+                                edited(text) => root.playlist-rename-input-changed(text);
+                            }
+                            ArchiveButton {
+                                text: "Save name";
+                                enabled: root.playlist-rename-input != "";
+                                clicked => root.rename-opened-playlist(root.opened-playlist-id, root.playlist-rename-input);
+                            }
+                        }
+                    }
+
+                    if root.current-view == "music" && root.music-detail-open && root.music-section != "playlists": HorizontalLayout {
+                        height: 34px;
+                        spacing: 8px;
+                        ArchiveButton { text: "Back"; clicked => root.back-music-detail(); }
+                        Text { text: root.music-detail-title; color: #ffffff; font-weight: 650; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        ArchiveButton { text: "Play all"; enabled: root.visible-count > 0; primary: true; clicked => root.play-all-collection(); }
+                    }
+
+                    if root.current-view == "music" && (root.music-section == "tracks" || root.music-detail-open) && root.visible-count == 0: Rectangle {
+                        vertical-stretch: 1;
+                        background: #1b1917;
+                        border-radius: 8px;
+                        VerticalLayout { alignment: center; spacing: 8px; Text { text: "No tracks match this collection and search."; color: #ffffffB3; horizontal-alignment: center; } if root.search-query != "" || root.music-genre != "All genres" || root.music-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); } }
+                    }
+
+                    if root.current-view == "movies" && !root.has-movies: Rectangle {
+                        vertical-stretch: 1;
+                        background: #1b1917;
+                        border-color: #3b3631;
+                        border-width: 1px;
+                        border-radius: 8px;
+                        VerticalLayout {
+                            padding: 28px;
+                            spacing: 12px;
+                            Text { text: "Your movie library is empty"; color: #ffffff; font-size: 22px; font-weight: 700; }
+                            Text { text: "Import a folder or add local movies. Local details and nearby posters are read on this device."; color: #ffffffB3; wrap: word-wrap; }
+                            HorizontalLayout {
+                                height: 36px;
+                                ArchiveButton { width: 220px; height: 36px; text: "Add local movies"; primary: true; clicked => root.open-movie-files(); }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+
+                    if root.current-view == "movies" && root.has-movies && root.movie-level != "episodes" && root.has-movie-cards: ScrollView {
+                        vertical-stretch: 1;
+                        content-width: self.width;
+                        FlexboxLayout {
+                            width: parent.width;
+                            spacing: 18px;
+                            flex-direction: row;
+                            flex-wrap: wrap;
+                            for card in root.movie-cards: VerticalLayout {
+                                width: root.poster-card-width;
+                                height: root.poster-card-width * 3 / 2 + 83px;
+                                spacing: 3px;
+                                Rectangle {
+                                    width: parent.width;
+                                    height: parent.width * 3 / 2;
+                                    clip: true;
+                                    if card.has-artwork: Image { width: parent.width; height: parent.height; source: card.artwork; image-fit: cover; accessible-label: card.title + " poster"; }
+                                    if !card.has-artwork: Rectangle { width: parent.width; height: parent.height; background: #302820; Text { text: card.monogram; color: #f46b32; font-size: 44px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                                    TouchArea {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        accessible-role: button;
+                                        accessible-label: (card.kind == "movie" ? "View details for " : "Browse ") + card.title;
+                                        clicked => {
+                                            if (card.kind == "movie") { root.movie-poster-clicked(card.id); }
+                                            else { root.open-movie-group(card.id); }
+                                        }
+                                        double-clicked => { if (card.kind != "movie") { root.open-movie-group(card.id); } }
+                                    }
+                                }
+                                ArchiveButton {
+                                    width: parent.width;
+                                    height: 23px;
+                                    style: "plain";
+                                    text: card.title;
+                                    accessible-label: (card.kind == "movie" ? "View details for " : "Browse ") + card.title;
+                                    clicked => {
+                                        if (card.kind == "movie") { root.select-movie(card.id); }
+                                        else { root.open-movie-group(card.id); }
+                                    }
+                                }
+                                Text {
+                                    text: card.kind == "movie"
+                                        ? (card.year == "" ? card.detail : card.year + (card.genre == "" ? "" : "  ·  " + card.genre))
+                                        : card.detail;
+                                    color: #ffffffB3;
+                                    font-size: 10px;
+                                    overflow: elide;
+                                }
+                                if card.progress-label != "": Text { text: card.progress-label; color: #aaa196; font-size: 9px; overflow: elide; }
+                                if card.kind == "movie": ArchiveButton {
+                                    width: parent.width;
+                                    height: 22px;
+                                    style: "plain";
+                                    text: card.saved ? "✓ In My List" : "+ Add to My List";
+                                    accessible-label: card.saved ? "Remove " + card.title + " from My List" : "Add " + card.title + " to My List";
+                                    clicked => root.toggle-saved-movie(card.id);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.current-view == "movies" && root.has-movies && root.movie-level == "episodes" && root.movie-episodes.length > 0: ListView {
+                        vertical-stretch: 1;
+                        accessible-role: list;
+                        for movie in root.movie-episodes: Rectangle {
+                            height: 64px;
+                            background: #1b1917;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 10px;
+                                if movie.has-artwork: Image { width: 46px; height: 48px; source: movie.artwork; image-fit: cover; accessible-label: movie.title + " poster"; }
+                                if !movie.has-artwork: Rectangle { width: 46px; height: 48px; background: #302820; Text { text: movie.monogram; color: #f46b32; horizontal-alignment: center; vertical-alignment: center; font-weight: 700; } }
+                                TouchArea {
+                                    horizontal-stretch: 1;
+                                    clicked => root.movie-poster-clicked(movie.id);
+                                    VerticalLayout {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        alignment: center;
+                                        spacing: 3px;
+                                        Text { text: movie.title; color: #ffffff; font-weight: 650; overflow: elide; }
+                                        Text { text: movie.progress-label == "" ? movie.detail : movie.progress-label; color: #ffffffB3; font-size: 10px; overflow: elide; }
+                                    }
+                                }
+                                if movie.can-resume: ArchiveButton { text: "Resume"; clicked => root.play-movie(movie.id, true); }
+                                ArchiveButton { text: "Start over"; primary: true; clicked => root.play-movie(movie.id, false); }
+                            }
+                        }
+                    }
+
+                    if root.current-view == "movies" && root.has-movies && !root.has-movie-cards && root.movie-level != "episodes": VerticalLayout {
+                        vertical-stretch: 1;
+                        alignment: center;
+                        spacing: 8px;
+                        Text { text: "No movies match this search and filter."; color: #ffffffB3; horizontal-alignment: center; }
+                        if root.search-query != "" || root.movie-view != "all" || root.movie-genre != "All genres" || root.movie-filter != "all" || root.movie-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-movie-filters(); }
+                    }
+
+                    if root.current-view == "movies" && root.has-movies && root.movie-level == "episodes" && root.movie-episodes.length == 0: VerticalLayout {
+                        vertical-stretch: 1;
+                        alignment: center;
+                        spacing: 8px;
+                        Text { text: "No episodes match this search and filter."; color: #ffffffB3; horizontal-alignment: center; }
+                        if root.search-query != "" || root.movie-view != "all" || root.movie-genre != "All genres" || root.movie-filter != "all" || root.movie-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-movie-filters(); }
+                    }
+
+                    HorizontalLayout {
+                        height: 27px;
+                        spacing: 10px;
+                        ArchiveButton { text: "Previous page"; enabled: root.page-index > 0; clicked => root.previous-page(); }
+                        Text { text: "Page " + (root.page-index + 1) + " of " + root.page-count; color: #ffffffB3; vertical-alignment: center; }
+                        ArchiveButton { text: "Next page"; enabled: root.page-index + 1 < root.page-count; clicked => root.next-page(); }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.artwork-target-ready: Text { text: "Artwork: " + root.artwork-target-title; color: #ffffffB3; font-size: 10px; overflow: elide; }
+                        if root.artwork-target-ready: ArchiveButton { text: "Retry local art"; enabled: root.artwork-target-missing; clicked => root.retry-local-artwork(); }
+                        if root.artwork-target-ready: ArchiveButton { text: "Find artwork online"; primary: true; clicked => root.find-online-artwork(); }
+                    }
+
+                    if root.status-message != "": Text { height: 18px; text: root.status-message; color: #ffffff; font-size: 11px; wrap: word-wrap; overflow: elide; }
+                }
+            }
+
+            if root.movie-fullscreen: Rectangle {
+                vertical-stretch: 1;
+                background: #080808;
+                clip: true;
+                Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: root.video-frame; image-fit: root.video-fill ? cover : contain; }
+                if !root.has-video-frame: Text { x: 32px; y: 24px; width: parent.width - 64px; height: parent.height - 48px; text: root.player-state == "Playback error" ? root.status-message : "Opening " + root.current-title + "…"; color: #ffffffB3; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                HorizontalLayout {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: 172px;
+                    height: 52px;
+                    spacing: 12px;
+                    ArchiveButton { width: 48px; height: 48px; style: "icon"; text: "|<"; accessible-label: "Previous movie"; enabled: root.has-current-track; space-activates: false; clicked => root.previous(); }
+                    ArchiveButton { width: 48px; height: 48px; style: "icon"; text: root.is-paused ? "▶" : "Ⅱ"; accessible-label: root.is-paused ? "Play movie" : "Pause movie"; enabled: root.can-toggle-pause; clicked => root.toggle-pause(); }
+                    ArchiveButton { width: 48px; height: 48px; style: "icon"; text: ">|"; accessible-label: "Next movie"; enabled: root.has-current-track; space-activates: false; clicked => root.next(); }
+                }
+            }
+
+            if root.queue-open && !root.movie-fullscreen: Rectangle {
+                height: 148px;
+                background: #1b1917;
+                border-color: #3b3631;
+                border-width: 1px;
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 5px;
+                    HorizontalLayout {
+                        height: 24px;
+                        Text { text: "PLAY QUEUE"; color: #ffffff; font-size: 10px; font-weight: 700; letter-spacing: 1px; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.queue-position; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        ArchiveButton { text: "Repeat " + root.repeat-mode; clicked => root.cycle-repeat-mode(); }
+                        ArchiveCheckBox { text: "Shuffle playback"; checked <=> root.playback-shuffle; toggled => root.playback-shuffle-changed(self.checked); }
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        accessible-role: list;
+                        for queued in root.queue-rows: Rectangle {
+                            height: 32px;
+                            background: #211e1b;
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                spacing: 5px;
+                                ArchiveButton { horizontal-stretch: 1; text: (queued.position + 1) + ".  " + queued.title; clicked => root.queue-jump(queued.revision, queued.position); }
+                                ArchiveButton { text: "Up"; enabled: queued.position > 0; clicked => root.queue-move(queued.revision, queued.position, queued.position - 1); }
+                                ArchiveButton { text: "Down"; enabled: queued.position + 1 < root.queue-rows.length; clicked => root.queue-move(queued.revision, queued.position, queued.position + 1); }
+                                ArchiveButton { text: "Remove"; clicked => root.queue-remove(queued.revision, queued.position); }
+                            }
+                        }
                     }
                 }
+            }
 
-                Rectangle { horizontal-stretch: 1; }
-
-                Text {
-                    text: root.player-time + " / " + root.player-duration;
-                    color: #aaa196;
-                    font-size: 12px;
-                    vertical-alignment: center;
+            if root.tools-open && root.has-current-track && !root.movie-fullscreen: Rectangle {
+                height: 164px;
+                background: #1b1917;
+                border-color: #3b3631;
+                border-width: 1px;
+                VerticalLayout {
+                    padding-left: 18px;
+                    padding-right: 18px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    spacing: 7px;
+                    HorizontalLayout {
+                        height: 22px;
+                        spacing: 8px;
+                        Text { text: root.playing-video ? "▣  MOVIE" : "♫  MUSIC"; color: #f46b32; font-size: 10px; font-weight: 700; vertical-alignment: center; accessible-label: root.playing-video ? "Movie" : "Music"; }
+                        Text { text: root.source-title; color: #ffffff; font-size: 14px; font-weight: 650; horizontal-stretch: 1; overflow: elide; accessible-label: root.source-title + ", local file " + root.source-path; }
+                        Text { text: root.source-format; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        height: 114px;
+                        spacing: 8px;
+                        alignment: center;
+                        VerticalLayout {
+                            width: 136px;
+                            Text { text: "♫  Audio"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                            if root.audio-tracks.length == 0: Text { text: "No audio tracks"; height: 24px; color: #ffffff78; font-size: 10px; vertical-alignment: center; }
+                            if root.audio-tracks.length > 0: ListView {
+                                vertical-stretch: 1;
+                                for choice in root.audio-tracks: Rectangle {
+                                    height: 24px;
+                                    ArchiveButton { width: parent.width; height: parent.height; text: choice.title; clicked => root.select-audio-track(root.current-track-id, choice.id); }
+                                }
+                            }
+                        }
+                        Rectangle { width: 1px; height: 84px; background: #3b3631; }
+                        VerticalLayout {
+                            width: 150px;
+                            Text { text: "CC  Subtitles"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                            ArchiveButton { width: parent.width; height: 24px; text: "⊘ Off"; accessible-label: "Turn subtitles off"; clicked => root.select-subtitle-track(root.current-track-id, -1); }
+                            if root.subtitle-tracks.length == 0: Text { text: "No subtitle tracks"; height: 24px; color: #ffffff78; font-size: 10px; vertical-alignment: center; }
+                            if root.subtitle-tracks.length > 0: ListView {
+                                vertical-stretch: 1;
+                                for choice in root.subtitle-tracks: Rectangle {
+                                    height: 24px;
+                                    ArchiveButton { width: parent.width; height: parent.height; text: choice.title; clicked => root.select-subtitle-track(root.current-track-id, choice.id); }
+                                }
+                            }
+                        }
+                        if root.chapters.length > 0: Rectangle { width: 1px; height: 84px; background: #3b3631; }
+                        if root.chapters.length > 0: VerticalLayout {
+                            width: 130px;
+                            Text { text: "▤  Chapters"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                            ListView {
+                                vertical-stretch: 1;
+                                for chapter in root.chapters: Rectangle {
+                                    height: 24px;
+                                    ArchiveButton { width: parent.width; height: parent.height; text: chapter.title; clicked => root.select-chapter(root.current-track-id, chapter.id); }
+                                }
+                            }
+                        }
+                        if root.chapters.length > 0: Rectangle { width: 1px; height: 84px; background: #3b3631; }
+                        VerticalLayout {
+                            width: 350px;
+                            Text { text: "⏱  Sync & time"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                            HorizontalLayout {
+                                spacing: 5px;
+                                Text { width: 42px; text: "Audio"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                ArchiveLineEdit { width: 68px; text <=> root.audio-delay-input; placeholder-text: "0"; accessible-label: "Audio delay in milliseconds"; }
+                                Text { width: 18px; text: "ms"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "✓"; accessible-label: "Apply audio delay"; clicked => root.audio-delay-changed(root.audio-delay-input); }
+                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "↺"; accessible-label: "Reset audio delay"; clicked => root.audio-delay-changed("0"); }
+                            }
+                            HorizontalLayout {
+                                spacing: 5px;
+                                Text { width: 42px; text: "Subs"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                ArchiveLineEdit { width: 68px; text <=> root.subtitle-delay-input; placeholder-text: "0"; accessible-label: "Subtitle delay in milliseconds"; }
+                                Text { width: 18px; text: "ms"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "✓"; accessible-label: "Apply subtitle delay"; clicked => root.subtitle-delay-changed(root.subtitle-delay-input); }
+                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "↺"; accessible-label: "Reset subtitle delay"; clicked => root.subtitle-delay-changed("0"); }
+                            }
+                            HorizontalLayout {
+                                spacing: 5px;
+                                ArchiveLineEdit { width: 102px; text <=> root.jump-time-input; placeholder-text: "hh:mm:ss"; edited(text) => root.jump-time-changed(text); accessible-label: "Jump to time"; }
+                                ArchiveButton { width: 62px; text: "↪ Jump"; accessible-label: "Jump to time"; enabled: root.can-seek; primary: true; clicked => root.jump-to-time(); }
+                                ArchiveButton { width: 54px; text: root.video-fill ? "Fit" : "Fill"; visible: root.playing-video; accessible-label: root.video-fill ? "Fit video to screen" : "Fill screen with video"; clicked => root.set-video-fill(!root.video-fill); }
+                                ArchiveButton { width: 88px; text: "⊕ CC"; accessible-label: "Add subtitle file"; clicked => root.add-subtitle-file(); }
+                            }
+                        }
+                    }
                 }
+            }
 
-                Button { text: "Previous"; enabled: root.has-current-track; clicked => root.previous(); }
-                Button {
-                    text: root.is-paused ? "Resume" : "Pause";
-                    enabled: root.can-toggle-pause;
-                    primary: true;
-                    clicked => root.toggle-pause();
+            if root.has-current-track && !root.movie-fullscreen: Rectangle {
+                height: 82px;
+                background: #211e1b;
+                border-color: #3b3631;
+                border-width: 1px;
+                VerticalLayout {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-top: 5px;
+                    padding-bottom: 5px;
+                    spacing: 3px;
+                    HorizontalLayout {
+                        height: 34px;
+                        spacing: 8px;
+                        VerticalLayout {
+                            min-width: 160px;
+                            max-width: 300px;
+                            horizontal-stretch: 1;
+                            spacing: 1px;
+                            Text { text: root.current-title; color: #ffffff; font-size: 14px; font-weight: 650; overflow: elide; }
+                            Text { text: root.player-state + "  ·  " + root.queue-position; color: #ffffffB3; font-size: 9px; overflow: elide; }
+                        }
+                        HorizontalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 8px;
+                            alignment: center;
+                            ArchiveButton { width: 42px; height: 38px; style: "icon"; text: "|<"; accessible-label: "Previous media"; enabled: root.has-current-track; space-activates: false; clicked => root.previous(); }
+                            ArchiveButton { width: 48px; height: 38px; style: "icon"; text: root.player-state == "Finished" ? "↻" : root.is-paused || root.player-state == "Idle" || root.player-state == "Ready" ? "▶" : "Ⅱ"; accessible-label: root.player-state == "Finished" ? "Replay" : root.is-paused || root.player-state == "Idle" || root.player-state == "Ready" ? "Play" : "Pause"; enabled: root.can-toggle-pause; primary: true; clicked => root.toggle-pause(); }
+                            ArchiveButton { width: 42px; height: 38px; style: "icon"; text: ">|"; accessible-label: "Next media"; enabled: root.has-current-track; space-activates: false; clicked => root.next(); }
+                        }
+                        ArchiveButton { width: 42px; height: 38px; style: "icon"; text: "■"; accessible-label: "Stop playback"; enabled: root.can-stop; space-activates: false; clicked => root.stop(); }
+                    }
+                    HorizontalLayout {
+                        height: 24px;
+                        spacing: 7px;
+                        Text { text: root.player-time; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        SeekSlider {
+                            horizontal-stretch: 1;
+                            minimum: 0;
+                            maximum: root.player-duration-ms;
+                            step: 1000;
+                            keyboard-step: 10000;
+                            value <=> root.player-position-ms;
+                            enabled: root.can-seek;
+                            current-track-id: root.current-track-id;
+                            current-load-generation: root.current-load-generation;
+                            seek-label: "Seek playback position";
+                            changed(value, track-id, load-generation) => {
+                                root.adjusting-seek = true;
+                                root.seek-changed(value, track-id, load-generation, false);
+                            }
+                            released(value, track-id, load-generation) => {
+                                root.adjusting-seek = false;
+                                root.seek-changed(value, track-id, load-generation, true);
+                            }
+                            cancelled => { root.adjusting-seek = false; }
+                        }
+                        Text { text: root.player-duration; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        Text { text: "Vol " + root.player-volume-label; color: #ffffffB3; font-size: 9px; vertical-alignment: center; }
+                        SeekSlider {
+                            width: 110px;
+                            minimum: 0;
+                            maximum: 100;
+                            step: 1;
+                            value <=> root.player-volume;
+                            enabled: root.can-adjust-playback;
+                            seek-label: "Playback volume";
+                            changed(value, track-id, load-generation) => { root.adjusting-volume = true; root.volume-changed(value, false); }
+                            released(value, track-id, load-generation) => { root.adjusting-volume = false; root.volume-changed(value, true); }
+                            cancelled => { root.adjusting-volume = false; }
+                        }
+                        Text { text: "Speed " + root.playback-rate-label; color: #ffffffB3; font-size: 9px; vertical-alignment: center; }
+                        SeekSlider {
+                            width: 110px;
+                            minimum: 0.25;
+                            maximum: 4;
+                            step: 0.25;
+                            value <=> root.playback-rate;
+                            enabled: root.can-adjust-playback;
+                            seek-label: "Playback speed";
+                            changed(value, track-id, load-generation) => { root.adjusting-rate = true; root.playback-rate-changed(value, false); }
+                            released(value, track-id, load-generation) => { root.adjusting-rate = false; root.playback-rate-changed(value, true); }
+                            cancelled => { root.adjusting-rate = false; }
+                        }
+                    }
                 }
-                Button { text: "Next"; enabled: root.has-current-track; clicked => root.next(); }
+            }
+        }
+
+        if root.about-open: Rectangle {
+            x: max(18px, parent.width - self.width - 24px);
+            y: 72px;
+            width: 430px;
+            height: 340px;
+            background: #211e1b;
+            border-color: #5a392a;
+            border-width: 1px;
+            border-radius: 8px;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 9px;
+                HorizontalLayout {
+                    Text { text: "About Première"; color: #ffffff; font-size: 20px; font-weight: 700; horizontal-stretch: 1; }
+                    ArchiveButton { text: "Close"; clicked => { root.about-open = false; } }
+                }
+                Text { text: "Version " + root.app-version; color: #f46b32; font-size: 12px; font-weight: 650; }
+                Text { text: "A local-first desktop media library. Media paths, tags, artwork and playback history stay on this device unless you request an online artwork lookup."; color: #ffffff; font-size: 11px; wrap: word-wrap; }
+                Text { text: "Movie artwork is looked up only when you choose Find artwork online. Automatic music artwork searches YouTube with the track title and artist; its MusicBrainz fallback may also use the album tag. Native file paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                Image { width: 85px; height: 62px; source: @image-url("../assets/attribution/tmdb-logo.png"); image-fit: contain; accessible-label: "TMDB logo"; }
+                Text { text: "This product uses the TMDB API but is not endorsed or certified by TMDB."; color: #ffffff; font-size: 10px; wrap: word-wrap; }
+                Text { text: "Inter is by the Inter Project Authors and is included under the SIL Open Font License 1.1; see the bundled OFL.txt. Playback requires a compatible external VLC 3 installation; VLC is not bundled."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+                Text { text: "Music metadata lookup runs automatically. Movie artwork lookup remains manual."; color: #f46b32; font-size: 10px; font-weight: 650; }
+            }
+        }
+
+        if root.settings-open: Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            background: #000000C8;
+            accessible-role: none;
+            settings-scope := FocusScope {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(560px, parent.width - 36px);
+                height: min(390px, parent.height - 36px);
+                forward-focus: tmdb-token-editor;
+                init => self.focus();
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: #211e1b;
+                    border-color: #5a392a;
+                    border-width: 1px;
+                    border-radius: 10px;
+                    VerticalLayout {
+                        padding: 22px;
+                        spacing: 14px;
+                        HorizontalLayout {
+                            Text { text: "Artwork options"; color: #ffffff; font-size: 22px; font-weight: 700; horizontal-stretch: 1; }
+                            ArchiveButton {
+                                text: "Close";
+                                accessible-label: "Close artwork options";
+                                clicked => {
+                                    root.tmdb-token-input = "";
+                                    root.settings-open = false;
+                                    root.settings-closed();
+                                    movie-keyboard-scope.focus();
+                                }
+                            }
+                        }
+                        Text { text: "Movie artwork lookup"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                        Text { text: root.tmdb-token-available ? "A TMDB token is available. Add or replace the saved token below, or remove the stored token." : "Add a TMDB read token to enable manual movie artwork lookup."; color: #ffffffB3; font-size: 11px; wrap: word-wrap; }
+                        tmdb-token-editor := ArchiveLineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.tmdb-token-input;
+                            placeholder-text: "TMDB read token";
+                            password: true;
+                            accessible-label: "TMDB read token. Input is masked and is not prefilled.";
+                            edited(text) => root.tmdb-token-input-changed(text);
+                            accepted(text) => { root.tmdb-token-input-changed(text); root.save-tmdb-token(); }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            ArchiveButton { text: "Save token"; primary: true; enabled: root.tmdb-token-input != ""; clicked => root.save-tmdb-token(); }
+                            ArchiveButton { text: "Remove stored token"; enabled: root.tmdb-token-available; clicked => root.remove-tmdb-token(); }
+                        }
+                        if root.settings-status != "": Text {
+                            text: root.settings-status;
+                            color: root.settings-error ? #ff9a85 : #ffffff;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                            accessible-label: "Artwork options status: " + root.settings-status;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        Text { text: "Automatic music artwork sends the track title and artist to YouTube. The MusicBrainz fallback may also use the album tag. Native media paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+
+        if root.movie-details-open: Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            background: #000000B8;
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                accessible-role: none;
+                clicked => { root.close-movie-details(); movie-keyboard-scope.focus(); }
+            }
+            movie-detail-scope := FocusScope {
+                init => self.focus();
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(760px, parent.width - 48px);
+                height: min(500px, parent.height - 40px);
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: #211e1b;
+                    border-color: #5a392a;
+                    border-width: 1px;
+                    border-radius: 10px;
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 14px;
+                        HorizontalLayout {
+                            Text { text: "FILM DETAILS"; color: #f46b32; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; horizontal-stretch: 1; vertical-alignment: center; }
+                            movie-detail-close := ArchiveButton { text: "Close"; clicked => { root.close-movie-details(); movie-keyboard-scope.focus(); } }
+                        }
+                        HorizontalLayout {
+                            vertical-stretch: 1;
+                            spacing: 22px;
+                            Rectangle {
+                                width: 240px;
+                                height: 390px;
+                                clip: true;
+                                background: #302820;
+                                if root.selected-movie-has-artwork: Image { width: parent.width; height: parent.height; source: root.selected-movie-artwork; image-fit: cover; accessible-label: root.selected-movie-title + " poster"; }
+                                if !root.selected-movie-has-artwork: Text { text: "No poster"; color: #ffffffB3; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 8px;
+                                Text { text: root.selected-movie-title; color: #ffffff; font-size: 27px; font-weight: 720; wrap: word-wrap; }
+                                Text { text: root.selected-movie-progress == "" ? "In your library" : root.selected-movie-progress; color: #ffffffB3; font-size: 12px; }
+                                Rectangle { height: 1px; background: #51483f; }
+                                HorizontalLayout {
+                                    spacing: 20px;
+                                    VerticalLayout { Text { text: "YEAR"; color: #ffffffB3; font-size: 9px; font-weight: 700; } Text { text: root.selected-movie-year; color: #ffffff; font-size: 12px; } }
+                                    VerticalLayout { Text { text: "GENRE"; color: #ffffffB3; font-size: 9px; font-weight: 700; } Text { text: root.selected-movie-genre; color: #ffffff; font-size: 12px; overflow: elide; } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 20px;
+                                    VerticalLayout { Text { text: "DURATION"; color: #ffffffB3; font-size: 9px; font-weight: 700; } Text { text: root.selected-movie-duration; color: #ffffff; font-size: 12px; } }
+                                    VerticalLayout { Text { text: "FORMAT"; color: #ffffffB3; font-size: 9px; font-weight: 700; } Text { text: root.selected-movie-format; color: #ffffff; font-size: 12px; } }
+                                }
+                                Rectangle { vertical-stretch: 1; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    if root.selected-movie-can-resume: ArchiveButton { text: "Resume"; primary: true; clicked => root.play-movie(root.selected-movie-id, true); }
+                                    ArchiveButton { text: root.selected-movie-can-resume ? "Start over" : "Play"; primary: !root.selected-movie-can-resume; clicked => root.play-movie(root.selected-movie-id, false); }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    ArchiveButton { text: root.selected-movie-saved ? "Remove from My List" : "Add to My List"; style: "chip"; primary: root.selected-movie-saved; clicked => root.toggle-saved-movie(root.selected-movie-id); }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

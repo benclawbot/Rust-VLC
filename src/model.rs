@@ -3,6 +3,18 @@ use std::path::{Path, PathBuf};
 
 pub type TrackId = i32;
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MediaDetails {
+    pub artist: String,
+    pub album: String,
+    pub album_artist: String,
+    pub genre: String,
+    pub disc_number: Option<u32>,
+    pub track_number: Option<u32>,
+    pub artwork: Option<PathBuf>,
+    pub artwork_override: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Track {
     pub id: TrackId,

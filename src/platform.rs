@@ -44,7 +44,13 @@ pub fn runtime_candidates() -> Vec<RuntimeCandidate> {
 
     #[cfg(target_os = "linux")]
     {
-        for root in ["/usr/lib", "/usr/lib64", "/usr/local/lib"] {
+        for root in [
+            "/usr/lib",
+            "/usr/lib64",
+            "/usr/local/lib",
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib/aarch64-linux-gnu",
+        ] {
             add_root_candidates(&mut candidates, Path::new(root));
         }
     }

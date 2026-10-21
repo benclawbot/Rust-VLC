@@ -1,6 +1,6 @@
 # Luna Max implementation hand-off
 
-The user selected **Archive** on 2026-10-20 and required audio support. The latest visual target is `design/proposals/archive.html`: the proposal sidebar is removed, a prominent Movies/Music switch sits above the collection, and Music has artwork-led views and a Playlists section. Clicking a song starts it immediately. Each track row starts with a checkbox; Select all acts on displayed rows, Play selected queues checked displayed rows in order, and selected tracks can be added to a new or listbox-selected playlist. An opened playlist can shuffle its stored track order. The HTML controls are a sample preview; production code uses Slint.
+The user selected **Archive** on 2026-10-20 and required audio support. The latest visual target is `design/proposals/archive.html`: the proposal sidebar is removed, a prominent Movies/Music switch sits above the collection, and Music has artwork-led views and a Playlists section. Double-clicking a movie starts it in fullscreen; leaving fullscreen keeps playback running. Clicking a song starts it immediately. Each track row starts with a checkbox; Select all acts on displayed rows, Play selected queues checked displayed rows in order, and selected tracks can be added to a new or listbox-selected playlist. An opened playlist can shuffle its stored track order. The HTML controls are a sample preview; production code uses Slint.
 
 ## Required roles
 
@@ -15,7 +15,7 @@ If these exact settings are unavailable, report it. Review and implementation ar
 ## Dispatch order and ownership
 
 1. D00 is accepted with the current Archive revisions recorded in `design/README.md`.
-2. The first native audio slice is in the working tree. Review its code and evidence before using it as the next task's base.
+2. The native movie/music implementation is in the working tree. Read the actual architecture, UX parity review and validation evidence before assigning remaining work.
 3. Run T02, then T03 on Arch. Sol reviews FFI lifetime and rendering measurements. A Windows audio smoke test does not close M0; require the Wayland and X11 rendering evidence in the plan.
 4. Parent completes T04 contract publication and assigns three non-overlapping lanes: T05 playback, T06 storage, T07 UI.
 5. Integrate reviewed lanes. Run T08 scanner, T09 queue, then T10 series. Start T11 artwork and T12 history only after their storage APIs exist.
@@ -75,11 +75,11 @@ failure or reason. Separate blockers from optional follow-up. If there are no
 findings, say so and list missing verification. Review only the fixed revision.
 ```
 
-## Current native audio slice
+## Current native implementation
 
-The first native slice imports local audio, shows filename-backed track rows, plays a clicked song, queues checked tracks in order, and provides Previous/Play-Pause/Next controls through one serialized libVLC owner. It also creates session-only playlists, adds checked tracks to a new or selected playlist, and shuffles a selected playlist's stored order. The Movies view is still a placeholder; there is no metadata/artwork extraction or database persistence. This slice does not complete T13/T14 or M1.
+The application imports local audio/video files and folders, reads tags/artwork, persists its library/playlists/progress, groups movies into series/seasons and music into albums/artists/genres, and runs both through one libVLC owner. Displayed-row selection, duplicate playlist occurrences, stored playlist shuffle, playback queue editing, fullscreen and core subtitle/audio tools are wired into Slint. TMDB's masked Read Access Token is saved from Options through the system credential store. Music artwork is matched automatically from public YouTube results, then may fall back to MusicBrainz/Cover Art Archive; users do not paste per-track links.
 
-Keep T02/T03 as a small executable playback slice. Do not expand into video posters, library scanning, persistent playlists or production title-card polish while the render path is unproven. The HTML preview defines the requested composition; it does not prove native performance.
+The implementation uses flat modules rather than the speculative subdirectories in the task catalogue. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current ownership and APIs. Persistent roots/reconciliation, queue restoration, full settings and P01–P04 are still open. The HTML preview defines composition; it does not prove native playback or performance. Windows smoke evidence does not close the Arch Wayland/X11 or macOS gates.
 
 ## Integration and completion
 

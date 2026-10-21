@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#141312">
   <link rel="icon" href="data:,">
-  <title>Archive · Premiere</title>
+  <title>Movies · Premiere</title>
   <style>
     @font-face {
       font-family: Inter;
@@ -18,8 +18,8 @@
     :root {
       color-scheme: dark;
       --bg: #141312;
-      --paper: #e7ddcc;
-      --muted: #aaa196;
+      --paper: #ffffff;
+      --muted: rgb(255 255 255 / .7);
       --accent: #f46b32;
       --line: #3b3631;
       --panel: #211e1b;
@@ -31,6 +31,7 @@
     }
 
     * { box-sizing: border-box; }
+    ::selection { color: #141312; background: var(--accent); }
     [hidden] { display: none !important; }
 
     html { background: var(--bg); scroll-behavior: smooth; }
@@ -43,7 +44,7 @@
       background: var(--bg);
     }
 
-    button, input, select { font: inherit; }
+    button, input, select { font: inherit; accent-color: var(--accent); }
     button, a, select { -webkit-tap-highlight-color: transparent; }
     button { color: inherit; }
     a { color: inherit; text-decoration: none; }
@@ -1110,7 +1111,7 @@
     <header class="catalogue-head">
       <div class="catalogue-title">
         <p class="eyebrow">Your films, in one place</p>
-        <h1>Archive</h1>
+        <h1>Movies</h1>
         <p class="catalogue-intro">A clear, browsable shelf for the films already in your library.</p>
       </div>
       <div class="search-block">
@@ -2037,6 +2038,7 @@
 
     function updateLibraryMode() {
       const isMusic = state.mode === "music";
+      document.title = `${isMusic ? "Music" : "Movies"} · Premiere`;
       moviesViewRoot.hidden = isMusic;
       musicViewRoot.hidden = !isMusic;
       document.querySelectorAll("[data-mode]").forEach((button) => {
