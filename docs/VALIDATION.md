@@ -20,7 +20,7 @@ On Windows x86_64, `cargo +1.95.0 fmt --all -- --check`, `cargo +1.95.0 clippy -
 
 The v0.1.1 tagged workflow run `39696328297` built all four packages successfully: Arch x86_64, Windows x86_64, macOS Apple Silicon and macOS Intel. All four downloaded installer files passed SHA-256 verification against their sidecars. GitHub blocked the workflow's publish job from starting because the account hit its Actions billing/spending limit; the verified installers and checksums were then uploaded to the published v0.1.1 release through the authenticated GitHub CLI. The release is at [github.com/benclawbot/Rust-VLC/releases/tag/v0.1.1](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.1).
 
-CI package creation passed on all four native runners. Clean installed launch/playback, upgrade and uninstall behavior on Arch and macOS remain unverified; these checks were not available on this Windows host. The macOS packages are unsigned and not notarized.
+CI package creation passed on all four native runners. Clean installed launch/playback, upgrade and uninstall behavior remain unverified on all three OS families; Arch and macOS installed checks could not be run on this Windows host. The macOS packages are unsigned and not notarized.
 
 Frozen-source Sol xhigh review found and verified fixes for model identity during UI refresh, same-item resume ownership, asynchronous VLC startup readiness, and Windows canonical path handling. The isolated playback harness passed 12 focused unit tests, three native resume tests and five prior native regressions with the installed libVLC 3.0.24 runtime. The resume tests repeatedly replaced the same item, queued different resume positions rapidly, and stopped a pending resume before a fresh play.
 
