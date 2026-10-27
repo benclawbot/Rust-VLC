@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn m3u8_import_preserves_unicode_relative_paths_duplicates_and_network_urls() {
-        let directory = PathBuf::from("C:/音乐/playlists");
+        let directory = PathBuf::from("音乐/playlists");
         let data = "\u{feff}#EXTM3U\r\n#EXTINF:-1,曲名\r\n../音楽/曲.flac\r\n../音楽/曲.flac\r\nhttps://example.test/live?token=signed\r\n";
         let entries = parse_m3u8(data.as_bytes(), &directory).unwrap();
 
@@ -485,7 +485,10 @@ mod tests {
 
     #[test]
     fn m3u8_export_keeps_duplicate_occurrences_and_writes_relative_native_paths() {
+        #[cfg(windows)]
         let directory = PathBuf::from("C:/音乐");
+        #[cfg(not(windows))]
+        let directory = std::env::temp_dir().join("Rust VLC 音乐");
         let track = Track {
             id: 7,
             path: directory.join("disc 1/曲.flac"),

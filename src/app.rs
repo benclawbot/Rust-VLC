@@ -7128,6 +7128,21 @@ mod tests {
     use std::time::{Duration, Instant};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    struct HeadlessPlatform;
+
+    impl slint::platform::Platform for HeadlessPlatform {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<std::rc::Rc<dyn slint::platform::WindowAdapter>, slint::platform::PlatformError>
+        {
+            Ok(
+                slint::platform::software_renderer::MinimalSoftwareWindow::new(
+                    slint::platform::software_renderer::RepaintBufferType::NewBuffer,
+                ),
+            )
+        }
+    }
+
     #[cfg(windows)]
     fn windows_verbatim_path(path: &Path) -> PathBuf {
         use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -7371,7 +7386,8 @@ mod tests {
 
     #[test]
     fn return_to_video_only_restores_fullscreen_for_current_video() {
-        let ui = crate::AppWindow::new().expect("create test window");
+        slint::platform::set_platform(Box::new(HeadlessPlatform))
+            .expect("install headless Slint platform for this test thread");
         let checkpoint = QueueCheckpoint {
             entry_ids: vec![3, 4],
             order: vec![0, 1],
@@ -7412,6 +7428,7 @@ mod tests {
         let state = Rc::new(RefCell::new(AppState::default()));
         let (sender, receiver) = mpsc::sync_channel(1);
 
+        let ui = crate::AppWindow::new().expect("create test window");
         super::wire_library_ui(&ui, &state, &sender, &snapshot);
         ui.invoke_return_to_video();
 
@@ -7421,7 +7438,10 @@ mod tests {
             Err(mpsc::TryRecvError::Empty)
         ));
         let playback = snapshot.lock().unwrap();
+        assert_eq!(playback.current_id, Some(3));
         assert_eq!(playback.load_generation, 8);
+        assert_eq!(playback.queue_revision, 7);
+        assert_eq!(playback.queue_len, 2);
         assert_eq!(playback.queue_checkpoint, checkpoint);
         assert_eq!(playback.position_ms, 12_000);
         assert_eq!(playback.audio_track, 5);
