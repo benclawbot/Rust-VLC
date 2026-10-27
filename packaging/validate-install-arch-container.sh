@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The official Arch container excludes documentation with a pacman NoExtract
+# rule. Whitelist this package's documentation in the disposable container so
+# pacman installs and validates the same files that the package archives.
+if pacman-conf NoExtract | grep -Fq 'usr/share/doc/*'; then
+  if ! grep -Eq '^[[:space:]]*NoExtract[[:space:]]*=.*usr/share/doc/\*' /etc/pacman.conf; then
+    echo 'Arch container excludes documentation through an unexpected pacman config include' >&2
+    exit 1
+  fi
+  sed -i -E '/^[[:space:]]*NoExtract[[:space:]]*=.*usr\/share\/doc\/\*/a NoExtract = !usr/share/doc/rust-vlc/*' /etc/pacman.conf
+  pacman-conf NoExtract | grep -Fq '!usr/share/doc/rust-vlc/*' || {
+    echo 'Failed to whitelist Rust-VLC package documentation in pacman config' >&2
+    exit 1
+  }
+  echo 'Whitelisted Rust-VLC documentation against the Arch container NoExtract filter.'
+fi
+
 pacman -Syu --noconfirm --needed base-devel libvlc vlc-plugins-all fontconfig libglvnd libx11 libxcb libxcursor libxi libxkbcommon libxkbcommon-x11 wayland python
 
 export HOME=/root
