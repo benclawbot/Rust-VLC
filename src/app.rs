@@ -2,7 +2,7 @@ use crate::browse::{self, MusicGroup};
 use crate::library::TrackSelection;
 use crate::library_worker::{LibraryEvent, LibraryJob, LibraryWorker};
 use crate::media_controls::{MediaControlBridge, MediaControlIntent};
-use crate::metadata::{ArtworkKind, ArtworkRequest, LocalMetadata};
+use crate::metadata::{ArtworkKind, ArtworkRequest, LocalMetadata, TmdbCandidate};
 use crate::model::{readable_filename, MediaDetails, NetworkUrl, Track, TrackId, TrackSource};
 use crate::playback::frame::FrameMailbox;
 use crate::playback::queue::{QueueCheckpoint, RepeatMode};
@@ -16,7 +16,8 @@ use crate::scan::ScanOutcome;
 use crate::series::episode_info;
 use crate::storage::{self, Bookmark, LibraryData, NetworkHistoryEntry, Progress, StorageWorker};
 use crate::{
-    AppWindow, BrowseRow, PictureInPictureWindow, QueueRow, TrackChoice, TrackRow, WatchedRootRow,
+    AppWindow, BrowseRow, PictureInPictureWindow, QueueRow, TmdbCandidateRow, TrackChoice,
+    TrackRow, WatchedRootRow,
 };
 use rfd::FileDialog;
 use slint::{
@@ -110,6 +111,13 @@ struct AppState {
     artwork_target: Option<TrackId>,
     tmdb_token_input: String,
     tmdb_token_available: bool,
+    tmdb_picker_target: Option<(TrackId, u64, ArtworkKind)>,
+    tmdb_candidates: Vec<TmdbCandidate>,
+    tmdb_picker_status: String,
+    tmdb_picker_selecting: bool,
+    tmdb_genre_queue: VecDeque<TrackId>,
+    tmdb_genre_inflight: HashMap<TrackId, u64>,
+    next_tmdb_genre_generation: u64,
     settings_status: String,
     settings_error: bool,
     audio_delay_input: String,
@@ -190,6 +198,7 @@ struct AppState {
     bookmark_model: Rc<VecModel<crate::BookmarkRow>>,
     network_history_model: Rc<VecModel<crate::NetworkHistoryRow>>,
     subtitle_result_model: Rc<VecModel<crate::SubtitleResultRow>>,
+    tmdb_candidate_model: Rc<VecModel<TmdbCandidateRow>>,
     opensubtitles_credentials_available: bool,
     opensubtitles_status: String,
     media_controls_status: String,
@@ -238,6 +247,13 @@ impl Default for AppState {
             artwork_target: None,
             tmdb_token_input: String::new(),
             tmdb_token_available: false,
+            tmdb_picker_target: None,
+            tmdb_candidates: Vec::new(),
+            tmdb_picker_status: String::new(),
+            tmdb_picker_selecting: false,
+            tmdb_genre_queue: VecDeque::new(),
+            tmdb_genre_inflight: HashMap::new(),
+            next_tmdb_genre_generation: 1,
             settings_status: String::new(),
             settings_error: false,
             audio_delay_input: "0".to_owned(),
@@ -318,6 +334,7 @@ impl Default for AppState {
             bookmark_model: Rc::new(VecModel::default()),
             network_history_model: Rc::new(VecModel::default()),
             subtitle_result_model: Rc::new(VecModel::default()),
+            tmdb_candidate_model: Rc::new(VecModel::default()),
             opensubtitles_credentials_available: false,
             opensubtitles_status: String::new(),
             media_controls_status: "Waiting for the app window to start.".into(),
@@ -451,6 +468,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 process_library_events(&mut state, &playback, &sender_timer, &snapshot_timer);
                 flush_pending_metadata(&mut state);
                 schedule_automatic_artwork(&mut state);
+                schedule_tmdb_genre_lookups(&mut state);
                 schedule_periodic_root_scans(&mut state);
                 flush_pending_root_scans(&mut state);
                 update_progress(&mut state, &playback);
@@ -896,6 +914,7 @@ fn wire_library_ui(
                     state.tmdb_token_input.clear();
                     state.tmdb_token_available = true;
                     state.settings_error = false;
+                    queue_missing_tmdb_genres(&mut state);
                     state.settings_status =
                         "TMDB token saved in the system credential store.".into();
                 }
@@ -1992,6 +2011,66 @@ fn wire_library_ui(
 
     {
         let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_relink_media(move |id| {
+            let mut state = state.borrow_mut();
+            let result = usize::try_from(id)
+                .map_err(|_| "That library item is no longer available.".to_owned())
+                .and_then(|_| {
+                    let allowed = find_track(&state, id)
+                        .filter(|track| track.source == TrackSource::Local)
+                        .map(|track| {
+                            if crate::playback::is_movie(track) {
+                                MOVIE_EXTENSIONS
+                            } else {
+                                AUDIO_EXTENSIONS
+                            }
+                        });
+                    let Some(extensions) = allowed else {
+                        return Err("That local media item is no longer available.".into());
+                    };
+                    let Some(path) = FileDialog::new()
+                        .add_filter("Supported media", extensions)
+                        .pick_file()
+                    else {
+                        return Ok(());
+                    };
+                    relink_media(&mut state, id, path, &sender, &snapshot)
+                });
+            if let Err(error) = result {
+                state.feedback = error;
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_close_tmdb_picker(move || {
+            let mut state = state.borrow_mut();
+            close_tmdb_picker(&mut state);
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_select_tmdb_candidate(move |candidate_id| {
+            let mut state = state.borrow_mut();
+            let result = select_tmdb_candidate(&mut state, candidate_id.as_str());
+            if let Err(error) = result {
+                state.tmdb_picker_status = error.clone();
+                state.feedback = error;
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
         let weak = ui.as_weak();
         let snapshot = Arc::clone(snapshot);
         ui.on_retry_local_artwork(move || {
@@ -2024,34 +2103,24 @@ fn wire_library_ui(
         ui.on_find_online_artwork(move || {
             let mut state = state.borrow_mut();
             if let Some(id) = artwork_target(&state, &read_snapshot(&snapshot)) {
-                if let Some(track) = find_track(&state, id) {
-                    let details = state.details.get(&id).cloned().unwrap_or_default();
-                    let video = crate::playback::is_movie(track);
-                    let episode = video.then(|| episode_info(&track.path)).flatten();
-                    let request = ArtworkRequest {
-                        title: episode.as_ref().map_or_else(
-                            || {
-                                if video || details.album.trim().is_empty() {
-                                    track.title.clone()
-                                } else {
-                                    details.album.clone()
-                                }
-                            },
-                            |episode| episode.series.clone(),
-                        ),
-                        artist: if video { None } else { nonempty(&details.album_artist, &details.artist).map(str::to_owned) },
-                        album: (!video && !details.album.trim().is_empty()).then(|| details.album.clone()),
-                        kind: if !video {
-                            ArtworkKind::Music
-                        } else if episode.is_some() {
-                            ArtworkKind::Series
-                        } else {
-                            ArtworkKind::Movie
-                        },
-                    };
-                    let generation = next_artwork_intent(&mut state, id);
-                    let result = state.library_worker.as_ref().ok_or_else(|| "The artwork provider worker is unavailable.".to_owned()).and_then(|worker| worker.submit(LibraryJob::Artwork(id, generation, request)));
-                    state.feedback = result.err().unwrap_or_else(|| "Online lookup requested. Search terms come from local tags; native media paths stay on this device.".into());
+                if let Some(request) = artwork_request_for_track(&state, id) {
+                    if matches!(request.kind, ArtworkKind::Movie | ArtworkKind::Series) {
+                        begin_tmdb_candidate_search(&mut state, id, request);
+                    } else {
+                        let generation = next_artwork_intent(&mut state, id);
+                        let result = state
+                            .library_worker
+                            .as_ref()
+                            .ok_or_else(|| {
+                                "The artwork provider worker is unavailable.".to_owned()
+                            })
+                            .and_then(|worker| {
+                                worker.submit(LibraryJob::Artwork(id, generation, request))
+                            });
+                        state.feedback = result.err().unwrap_or_else(|| {
+                            "Online lookup requested. Search terms come from local tags; native media paths stay on this device.".into()
+                        });
+                    }
                 }
             }
             refresh_from_parts(&weak, &mut state, &snapshot);
@@ -4166,12 +4235,19 @@ fn process_library_events(
                 }
                 apply_scan_result(state, root, outcome);
             }
-            LibraryEvent::Metadata(id, result) => {
-                if state.tracks.iter().any(|track| track.id == id) {
+            LibraryEvent::Metadata(id, path, result) => {
+                if !metadata_event_path_matches(state, id, &path) {
+                    continue;
+                }
+                state.tmdb_genre_inflight.remove(&id);
+                state.tmdb_genre_queue.retain(|queued| *queued != id);
+                let is_music = state.tracks.iter().any(|track| track.id == id);
+                if is_music {
                     state.automatic_artwork_readiness.insert(id, result.is_ok());
                 }
                 match result {
                     Ok(metadata) => {
+                        let mut updated_track = None;
                         if let Some(track) = state
                             .tracks
                             .iter_mut()
@@ -4183,10 +4259,23 @@ fn process_library_events(
                                 .as_deref()
                                 .filter(|title| !title.trim().is_empty())
                             {
-                                track.title = title.to_owned();
+                                if track.title != title {
+                                    track.title = title.to_owned();
+                                    updated_track = Some(track.clone());
+                                }
                             }
                         }
+                        if let Some(track) = updated_track {
+                            let _ = send_command(
+                                sender,
+                                PlaybackCommand::UpdateTrackData { track },
+                                snapshot,
+                            );
+                        }
                         apply_metadata_result(state, id, metadata);
+                        if is_missing_tmdb_genre(state, id) {
+                            queue_tmdb_genre_lookup(state, id);
+                        }
                     }
                     Err(error) => {
                         state.feedback = format!("Unable to read local metadata: {error}")
@@ -4195,6 +4284,37 @@ fn process_library_events(
             }
             LibraryEvent::Artwork(id, generation, result) => {
                 apply_artwork_result(state, id, generation, result);
+            }
+            LibraryEvent::TmdbCandidates(id, generation, result) => {
+                if state.artwork_intents.get(&id) != Some(&generation)
+                    || state
+                        .tmdb_picker_target
+                        .is_none_or(|(target, intent, _)| target != id || intent != generation)
+                {
+                    continue;
+                }
+                state.tmdb_picker_selecting = false;
+                match result {
+                    Ok(candidates) if candidates.is_empty() => {
+                        state.tmdb_candidates.clear();
+                        state.tmdb_picker_status = "No TMDB matches were found.".into();
+                    }
+                    Ok(candidates) => {
+                        state.tmdb_candidates = candidates;
+                        state.tmdb_picker_status = "Choose a result with a poster.".into();
+                    }
+                    Err(error) => {
+                        state.tmdb_candidates.clear();
+                        state.tmdb_picker_status = error.clone();
+                        state.feedback = error;
+                    }
+                }
+            }
+            LibraryEvent::TmdbCandidateSelected(id, generation, result) => {
+                apply_tmdb_candidate_result(state, id, generation, result);
+            }
+            LibraryEvent::TmdbGenres(id, generation, result) => {
+                apply_tmdb_genre_result(state, id, generation, result);
             }
             LibraryEvent::AutomaticArtwork(id, request, result) => {
                 if state.active_automatic_artwork == Some(id) {
@@ -4295,6 +4415,9 @@ fn schedule_automatic_artwork(state: &mut AppState) {
             continue;
         }
         let retry = state.automatic_artwork_retries.front().copied();
+        if retry.is_none() {
+            advance_automatic_artwork_cursor(state);
+        }
         let id = match retry {
             Some(id) => id,
             None => match state.tracks.get(state.automatic_artwork_cursor) {
@@ -4364,6 +4487,371 @@ fn schedule_automatic_artwork(state: &mut AppState) {
         }
         return;
     }
+}
+
+fn advance_automatic_artwork_cursor(state: &mut AppState) {
+    while let Some(track) = state.tracks.get(state.automatic_artwork_cursor) {
+        if track.source == TrackSource::Local && crate::model::is_supported_audio_path(&track.path)
+        {
+            break;
+        }
+        state.automatic_artwork_readiness.remove(&track.id);
+        state.automatic_artwork_cursor += 1;
+    }
+}
+
+fn is_missing_tmdb_genre(state: &AppState, id: TrackId) -> bool {
+    find_track(state, id)
+        .is_some_and(|track| track.source == TrackSource::Local && crate::playback::is_movie(track))
+        && state
+            .details
+            .get(&id)
+            .is_none_or(|details| details.genre.trim().is_empty())
+}
+
+fn metadata_event_path_matches(state: &AppState, id: TrackId, event_path: &Path) -> bool {
+    find_track(state, id).is_some_and(|track| {
+        track.source == TrackSource::Local
+            && path_identity_key(&track.path) == path_identity_key(event_path)
+    })
+}
+
+fn tmdb_genre_request(state: &AppState, id: TrackId) -> Option<ArtworkRequest> {
+    let track = find_track(state, id)?;
+    if track.source != TrackSource::Local || !crate::playback::is_movie(track) {
+        return None;
+    }
+    let episode = episode_info(&track.path);
+    let title = episode
+        .as_ref()
+        .map_or(track.title.as_str(), |episode| episode.series.as_str())
+        .trim();
+    (!title.is_empty()).then(|| ArtworkRequest {
+        title: title.to_owned(),
+        artist: None,
+        album: None,
+        kind: if episode.is_some() {
+            ArtworkKind::Series
+        } else {
+            ArtworkKind::Movie
+        },
+    })
+}
+
+fn queue_tmdb_genre_lookup(state: &mut AppState, id: TrackId) {
+    if state.tmdb_token_available
+        && is_missing_tmdb_genre(state, id)
+        && !state.tmdb_genre_queue.contains(&id)
+        && !state.tmdb_genre_inflight.contains_key(&id)
+    {
+        state.tmdb_genre_queue.push_back(id);
+    }
+}
+
+fn queue_missing_tmdb_genres(state: &mut AppState) {
+    let ids = state
+        .movies
+        .iter()
+        .map(|movie| movie.id)
+        .collect::<Vec<_>>();
+    for id in ids {
+        queue_tmdb_genre_lookup(state, id);
+    }
+}
+
+fn apply_tmdb_genre_result(
+    state: &mut AppState,
+    id: TrackId,
+    generation: u64,
+    result: Result<Option<String>, String>,
+) -> bool {
+    if state.tmdb_genre_inflight.get(&id) != Some(&generation) {
+        return false;
+    }
+    state.tmdb_genre_inflight.remove(&id);
+    if !is_missing_tmdb_genre(state, id) {
+        return false;
+    }
+    match result {
+        Ok(Some(genre)) if !genre.trim().is_empty() => {
+            state.details.entry(id).or_default().genre = genre;
+            state.feedback = "Movie and TV genres were updated from TMDB.".into();
+            persist_library(state);
+        }
+        Ok(_) => {}
+        Err(error) => state.feedback = format!("TMDB genre lookup failed: {error}"),
+    }
+    true
+}
+
+fn schedule_tmdb_genre_lookups(state: &mut AppState) {
+    if !state.tmdb_token_available || !state.tmdb_genre_inflight.is_empty() {
+        return;
+    }
+    while let Some(id) = state.tmdb_genre_queue.front().copied() {
+        if !is_missing_tmdb_genre(state, id) {
+            state.tmdb_genre_queue.pop_front();
+            continue;
+        }
+        let Some(request) = tmdb_genre_request(state, id) else {
+            state.tmdb_genre_queue.pop_front();
+            continue;
+        };
+        let generation = state.next_tmdb_genre_generation.max(1);
+        state.next_tmdb_genre_generation = generation.wrapping_add(1).max(1);
+        let result = state
+            .library_worker
+            .as_ref()
+            .ok_or(crate::library_worker::QueueSubmitError::Stopped)
+            .and_then(|worker| {
+                worker.try_submit(LibraryJob::LookupTmdbGenres(id, generation, request))
+            });
+        match result {
+            Ok(()) => {
+                state.tmdb_genre_queue.pop_front();
+                state.tmdb_genre_inflight.insert(id, generation);
+            }
+            Err(crate::library_worker::QueueSubmitError::Full) => return,
+            Err(crate::library_worker::QueueSubmitError::Stopped) => {
+                state.feedback =
+                    "Automatic TMDB genre lookup is unavailable because the lookup worker stopped."
+                        .into();
+                return;
+            }
+        }
+        return;
+    }
+}
+
+fn artwork_request_for_track(state: &AppState, id: TrackId) -> Option<ArtworkRequest> {
+    let track = find_track(state, id)?;
+    let details = state.details.get(&id).cloned().unwrap_or_default();
+    let video = crate::playback::is_movie(track);
+    let episode = video.then(|| episode_info(&track.path)).flatten();
+    Some(ArtworkRequest {
+        title: episode.as_ref().map_or_else(
+            || {
+                if video || details.album.trim().is_empty() {
+                    track.title.clone()
+                } else {
+                    details.album.clone()
+                }
+            },
+            |episode| episode.series.clone(),
+        ),
+        artist: if video {
+            None
+        } else {
+            nonempty(&details.album_artist, &details.artist).map(str::to_owned)
+        },
+        album: (!video && !details.album.trim().is_empty()).then(|| details.album.clone()),
+        kind: if !video {
+            ArtworkKind::Music
+        } else if episode.is_some() {
+            ArtworkKind::Series
+        } else {
+            ArtworkKind::Movie
+        },
+    })
+}
+
+fn begin_tmdb_candidate_search(state: &mut AppState, id: TrackId, request: ArtworkRequest) {
+    let generation = next_artwork_intent(state, id);
+    state.tmdb_picker_target = Some((id, generation, request.kind));
+    state.tmdb_candidates.clear();
+    state.tmdb_picker_selecting = true;
+    state.tmdb_picker_status = "Searching TMDB…".into();
+    let result = state
+        .library_worker
+        .as_ref()
+        .ok_or_else(|| "The artwork provider worker is unavailable.".to_owned())
+        .and_then(|worker| {
+            worker.submit(LibraryJob::SearchTmdbCandidates(id, generation, request))
+        });
+    if let Err(error) = result {
+        state.tmdb_picker_selecting = false;
+        state.tmdb_picker_status = error.clone();
+        state.feedback = error;
+    }
+}
+
+fn close_tmdb_picker(state: &mut AppState) {
+    if let Some((id, generation, _)) = state.tmdb_picker_target {
+        if state.artwork_intents.get(&id) == Some(&generation) {
+            next_artwork_intent(state, id);
+        }
+    }
+    state.tmdb_picker_target = None;
+    state.tmdb_candidates.clear();
+    state.tmdb_picker_status.clear();
+    state.tmdb_picker_selecting = false;
+}
+
+fn select_tmdb_candidate(state: &mut AppState, candidate_id: &str) -> Result<(), String> {
+    let (id, generation, kind) = state
+        .tmdb_picker_target
+        .ok_or_else(|| "The TMDB picker is no longer active.".to_owned())?;
+    if state.artwork_intents.get(&id) != Some(&generation) {
+        return Err("The TMDB search result is out of date.".into());
+    }
+    let candidate_id = candidate_id
+        .parse::<u64>()
+        .map_err(|_| "That TMDB candidate is invalid.".to_owned())?;
+    let candidate = state
+        .tmdb_candidates
+        .iter()
+        .find(|candidate| candidate.id == candidate_id && candidate.poster.is_some())
+        .ok_or_else(|| "Choose a TMDB result that has a poster.".to_owned())?;
+    let candidate_id = candidate.id;
+    state
+        .library_worker
+        .as_ref()
+        .ok_or_else(|| "The artwork provider worker is unavailable.".to_owned())?
+        .submit(LibraryJob::SelectTmdbCandidate(
+            id,
+            generation,
+            kind,
+            candidate_id,
+        ))?;
+    state.tmdb_picker_selecting = true;
+    state.tmdb_picker_status = "Downloading the selected poster…".into();
+    Ok(())
+}
+
+fn apply_tmdb_candidate_result(
+    state: &mut AppState,
+    id: TrackId,
+    generation: u64,
+    result: Result<crate::metadata::TmdbArtwork, String>,
+) -> bool {
+    let Some((target_id, target_generation, _)) = state.tmdb_picker_target else {
+        return false;
+    };
+    if target_id != id
+        || target_generation != generation
+        || state.artwork_intents.get(&id) != Some(&generation)
+    {
+        return false;
+    }
+    match result {
+        Ok(artwork) => {
+            let Some(poster) = artwork.poster else {
+                state.tmdb_picker_selecting = false;
+                state.tmdb_picker_status = "TMDB returned no poster for that result.".into();
+                return true;
+            };
+            let details = state.details.entry(id).or_default();
+            details.artwork = Some(poster);
+            details.artwork_override = true;
+            if details.genre.trim().is_empty() && !artwork.genre.trim().is_empty() {
+                details.genre = artwork.genre;
+            }
+            state.feedback = "Selected TMDB poster saved in the local artwork cache.".into();
+            state.tmdb_picker_target = None;
+            state.tmdb_candidates.clear();
+            state.tmdb_picker_status.clear();
+            state.tmdb_picker_selecting = false;
+            persist_library(state);
+        }
+        Err(error) => {
+            state.tmdb_picker_selecting = false;
+            state.tmdb_picker_status = error.clone();
+            state.feedback = error;
+        }
+    }
+    true
+}
+
+fn relink_media(
+    state: &mut AppState,
+    id: TrackId,
+    selected_path: PathBuf,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+) -> Result<(), String> {
+    let mut updated = find_track(state, id)
+        .filter(|track| track.source == TrackSource::Local)
+        .cloned()
+        .ok_or_else(|| "That local media item is no longer available.".to_owned())?;
+    let path = selected_path
+        .canonicalize()
+        .map_err(|_| "The selected media file could not be opened.".to_owned())?;
+    if !path.is_file() {
+        return Err("Choose an existing media file.".into());
+    }
+    let video = crate::playback::is_movie(&updated);
+    if (video && !is_movie_path(&path)) || (!video && !crate::model::is_supported_audio_path(&path))
+    {
+        return Err("Choose a file of the same media type.".into());
+    }
+    let identity = path_identity_key(&path);
+    if state.tracks.iter().chain(&state.movies).any(|track| {
+        track.id != id
+            && track.source == TrackSource::Local
+            && (path_identity_key(&track.path) == identity
+                || track
+                    .path
+                    .canonicalize()
+                    .is_ok_and(|existing| path_identity_key(&existing) == identity))
+    }) {
+        return Err("That file is already linked to another library item.".into());
+    }
+
+    let previous_identity = path_identity_key(&updated.path);
+    if !video {
+        updated.format = path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_ascii_uppercase)
+            .unwrap_or_else(|| "AUDIO".to_owned());
+    }
+    updated.path = path.clone();
+    send_command(
+        sender,
+        PlaybackCommand::UpdateTrackData {
+            track: updated.clone(),
+        },
+        snapshot,
+    )?;
+    if let Some(track) = state
+        .tracks
+        .iter_mut()
+        .chain(&mut state.movies)
+        .find(|track| track.id == id)
+    {
+        track.path = path.clone();
+        track.format = updated.format.clone();
+    }
+    state.unavailable_media.remove(&id);
+    if previous_identity != identity {
+        state.file_fingerprints.remove(&previous_identity);
+    }
+    if let Ok(metadata) = std::fs::metadata(&path) {
+        state.file_fingerprints.insert(
+            identity,
+            crate::scan::FileFingerprint {
+                path: path.clone(),
+                size: metadata.len(),
+                modified: metadata.modified().ok(),
+            },
+        );
+    }
+    state.tmdb_genre_inflight.remove(&id);
+    state.tmdb_genre_queue.retain(|queued| *queued != id);
+    if state.artwork_intents.contains_key(&id) {
+        next_artwork_intent(state, id);
+    }
+    state.pending_metadata.retain(|queued| *queued != id);
+    state.pending_metadata.push_back(id);
+    if !video {
+        state.automatic_artwork_readiness.remove(&id);
+        queue_automatic_artwork_retry(state, id);
+    }
+    flush_pending_metadata(state);
+    state.feedback =
+        "Library item relinked. Playback history and playlist entries were kept.".into();
+    persist_library(state);
+    Ok(())
 }
 
 fn queue_automatic_artwork_retry(state: &mut AppState, id: TrackId) -> bool {
@@ -6095,6 +6583,7 @@ fn music_rows(
                 duration: SharedString::from(duration),
                 selected,
                 unavailable,
+                local_media: track.source == TrackSource::Local,
                 artwork: artwork.unwrap_or_default(),
                 has_artwork,
                 monogram: monogram(&track.title),
@@ -6132,6 +6621,7 @@ fn episode_rows(state: &mut AppState, tracks: &[Track], offset: usize) -> Vec<Tr
                 duration: SharedString::from("—"),
                 selected: false,
                 unavailable,
+                local_media: movie.source == TrackSource::Local,
                 artwork: artwork.unwrap_or_default(),
                 has_artwork,
                 monogram: monogram(&movie.title),
@@ -6601,6 +7091,11 @@ fn refresh_ui(ui: &AppWindow, state: &mut AppState, playback: &PlaybackSnapshot)
             .as_ref()
             .is_some_and(|movie| state.saved_movies.contains(&movie.id)),
     );
+    ui.set_selected_movie_local(
+        selected_movie
+            .as_ref()
+            .is_some_and(|movie| movie.source == TrackSource::Local),
+    );
     ui.set_music_genre(SharedString::from(state.music_genre.as_str()));
     ui.set_music_sort(SharedString::from(
         if state.music_section == "albums"
@@ -6657,6 +7152,32 @@ fn refresh_ui(ui: &AppWindow, state: &mut AppState, playback: &PlaybackSnapshot)
     ui.set_artwork_target_missing(
         target_track.is_some() && target_art.is_none_or(|path| !path.is_file()),
     );
+    ui.set_artwork_target_video(target_track.is_some_and(crate::playback::is_movie));
+    let tmdb_candidates = state.tmdb_candidates.clone();
+    let tmdb_candidate_rows = tmdb_candidates
+        .iter()
+        .map(|candidate| {
+            let artwork = cached_image(state, candidate.poster.as_ref());
+            TmdbCandidateRow {
+                id: SharedString::from(candidate.id.to_string()),
+                title: SharedString::from(candidate.title.as_str()),
+                year: SharedString::from(
+                    candidate
+                        .year
+                        .map(|year| year.to_string())
+                        .unwrap_or_default(),
+                ),
+                genre: SharedString::from(candidate.genre.as_str()),
+                has_artwork: artwork.is_some(),
+                artwork: artwork.unwrap_or_default(),
+            }
+        })
+        .collect();
+    update_model(&state.tmdb_candidate_model, tmdb_candidate_rows);
+    ui.set_tmdb_candidates(ModelRc::from(Rc::clone(&state.tmdb_candidate_model)));
+    ui.set_tmdb_picker_open(state.tmdb_picker_target.is_some());
+    ui.set_tmdb_picker_status(SharedString::from(state.tmdb_picker_status.as_str()));
+    ui.set_tmdb_picker_busy(state.tmdb_picker_selecting);
     ui.set_tmdb_token_input(SharedString::from(state.tmdb_token_input.as_str()));
     ui.set_tmdb_token_available(state.tmdb_token_available);
     ui.set_settings_status(SharedString::from(state.settings_status.as_str()));
@@ -6772,6 +7293,16 @@ fn refresh_playback_ui(ui: &AppWindow, state: &mut AppState, playback: &Playback
         state.rendered_queue_revision = playback.queue_revision;
     }
     if refresh_delay_drafts(state, playback) {
+        if let Some(fullscreen) = fullscreen_transition_action(
+            true,
+            playback,
+            ui.get_movie_fullscreen(),
+            ui.get_picture_in_picture_open(),
+        ) {
+            ui.set_movie_fullscreen(fullscreen);
+            ui.window().set_fullscreen(fullscreen);
+            state.fullscreen_activity_at = fullscreen.then(Instant::now);
+        }
         state.subtitle_results.clear();
         state.subtitle_search_pending = None;
         state.subtitle_search_status = if state.subtitle_download_pending.is_some() {
@@ -6826,6 +7357,33 @@ fn refresh_delay_drafts(state: &mut AppState, playback: &PlaybackSnapshot) -> bo
         state.subtitle_delay_input = format!("{}", playback.subtitle_delay_us / 1000);
     }
     current_changed
+}
+
+fn fullscreen_transition_action(
+    current_changed: bool,
+    playback: &PlaybackSnapshot,
+    fullscreen: bool,
+    picture_in_picture_open: bool,
+) -> Option<bool> {
+    if !current_changed {
+        return None;
+    }
+    if playback.current_id.is_none() {
+        return fullscreen.then_some(false);
+    }
+    if playback.current_is_video {
+        let video_is_loaded = matches!(
+            playback.state,
+            PlaybackUiState::Loading | PlaybackUiState::Playing | PlaybackUiState::Paused
+        );
+        if video_is_loaded {
+            (!fullscreen && !picture_in_picture_open).then_some(true)
+        } else {
+            fullscreen.then_some(false)
+        }
+    } else {
+        fullscreen.then_some(false)
+    }
 }
 
 fn status_message<'a>(feedback: &'a str, playback: &'a PlaybackSnapshot) -> &'a str {
@@ -7094,22 +7652,25 @@ fn movie_from_path(id: TrackId, path: std::path::PathBuf) -> Option<Track> {
 mod tests {
     use super::{
         add_paths, add_watched_root, apply_artwork_result, apply_automatic_artwork_result,
-        apply_metadata_result, apply_scan_result, bookmark_name, can_resume, can_toggle_pause,
+        apply_metadata_result, apply_scan_result, apply_tmdb_candidate_result,
+        apply_tmdb_genre_result, bookmark_name, can_resume, can_toggle_pause,
         collection_start_index, collection_starts_movie, collection_track_at, control_resolution,
-        flush_pending_metadata, import_m3u8_into_state, library_snapshot,
-        media_control_pause_change_needed, movie_double_click, movie_from_path, music_collection,
-        next_artwork_intent, path_identity_key, pending_seek_matches_playback, play_collection,
-        playlist_collection, playlist_filtered_positions, playlist_move_target,
+        episode_rows, flush_pending_metadata, fullscreen_transition_action, import_m3u8_into_state,
+        is_missing_tmdb_genre, library_snapshot, media_control_pause_change_needed,
+        metadata_event_path_matches, movie_double_click, movie_from_path, music_collection,
+        music_rows, next_artwork_intent, path_identity_key, pending_seek_matches_playback,
+        play_collection, playlist_collection, playlist_filtered_positions, playlist_move_target,
         playlist_owner_for_queue, playlist_row_is_current, queue_automatic_artwork_retry,
-        queue_position_label, reconcile_equalizer_settings, refresh_delay_drafts,
-        refresh_track_choice_models, remove_watched_root, restore_queue_tracks,
-        schedule_automatic_artwork, seek_commit_target, selected_displayed_tracks,
-        set_movie_artwork_target, sort_music_tracks, status_message, update_network_history,
-        update_queue_checkpoint, wide_prefix_eq_ascii, windows_path_identity_units, AppState,
-        ControlResolution, PendingSeek, MOVIE_DETAILS_CLICK_DELAY, TRANSPORT_ACK_TIMEOUT,
+        queue_position_label, queue_tmdb_genre_lookup, reconcile_equalizer_settings,
+        refresh_delay_drafts, refresh_track_choice_models, relink_media, remove_watched_root,
+        restore_queue_tracks, schedule_automatic_artwork, schedule_tmdb_genre_lookups,
+        seek_commit_target, selected_displayed_tracks, set_movie_artwork_target, sort_music_tracks,
+        status_message, tmdb_genre_request, update_network_history, update_queue_checkpoint,
+        wide_prefix_eq_ascii, windows_path_identity_units, AppState, ControlResolution,
+        PendingSeek, MOVIE_DETAILS_CLICK_DELAY, TRANSPORT_ACK_TIMEOUT,
     };
-    use crate::metadata::{ArtworkKind, ArtworkRequest, LocalMetadata};
-    use crate::model::{MediaDetails, Track, TrackSource};
+    use crate::metadata::{ArtworkKind, ArtworkRequest, LocalMetadata, TmdbArtwork};
+    use crate::model::{MediaDetails, NetworkUrl, Track, TrackSource};
     use crate::playback::queue::{QueueCheckpoint, RepeatMode};
     use crate::playback::{
         is_movie, ControlAcknowledgement, EqualizerSettings, PlaybackCommand, PlaybackSnapshot,
@@ -7119,16 +7680,24 @@ mod tests {
     use crate::storage::{LibraryStore, Progress};
     use slint::{Model, ModelRc, SharedString, VecModel};
     use std::cell::RefCell;
-    use std::collections::{HashMap, VecDeque};
-    #[cfg(windows)]
-    use std::path::Path;
-    use std::path::PathBuf;
+    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct HeadlessPlatform;
+
+    fn local_track(id: i32, path: PathBuf, title: &str, format: &str) -> Track {
+        Track {
+            source: TrackSource::Local,
+            id,
+            path,
+            title: title.into(),
+            format: format.into(),
+        }
+    }
 
     impl slint::platform::Platform for HeadlessPlatform {
         fn create_window_adapter(
@@ -7362,6 +7931,94 @@ mod tests {
         assert!(!refresh_delay_drafts(&mut state, &playback));
         assert_eq!(state.audio_delay_input, "125");
         assert_eq!(state.subtitle_delay_input, "-250");
+    }
+
+    #[test]
+    fn mixed_media_transitions_manage_fullscreen_only_for_new_loads() {
+        let video = PlaybackSnapshot {
+            current_id: Some(7),
+            current_is_video: true,
+            load_generation: 4,
+            state: PlaybackUiState::Loading,
+            ..PlaybackSnapshot::default()
+        };
+        let audio = PlaybackSnapshot {
+            current_id: Some(8),
+            current_is_video: false,
+            load_generation: 5,
+            ..PlaybackSnapshot::default()
+        };
+
+        assert_eq!(
+            fullscreen_transition_action(true, &video, false, false),
+            Some(true),
+            "a newly loaded video enters fullscreen"
+        );
+        assert_eq!(
+            fullscreen_transition_action(false, &video, false, false),
+            None,
+            "Escape must not reopen fullscreen for the same load"
+        );
+        assert_eq!(
+            fullscreen_transition_action(true, &audio, true, false),
+            Some(false),
+            "a newly loaded audio track leaves fullscreen"
+        );
+        assert_eq!(
+            fullscreen_transition_action(true, &video, false, true),
+            None,
+            "a video transition must not take focus from picture in picture"
+        );
+
+        let restored_video = PlaybackSnapshot {
+            state: PlaybackUiState::Idle,
+            ..video
+        };
+        assert_eq!(
+            fullscreen_transition_action(true, &restored_video, false, false),
+            None,
+            "restoring an idle video queue must not open fullscreen"
+        );
+        assert_eq!(
+            fullscreen_transition_action(true, &restored_video, true, false),
+            Some(false),
+            "stopping an idle video exits fullscreen"
+        );
+    }
+
+    #[test]
+    fn fullscreen_replay_transition_is_observed_on_the_loading_snapshot() {
+        let mut state = AppState {
+            last_current_id: Some(7),
+            last_current_load_generation: 12,
+            ..AppState::default()
+        };
+        let ended = PlaybackSnapshot {
+            current_id: Some(7),
+            current_is_video: true,
+            load_generation: 12,
+            state: PlaybackUiState::Ended,
+            ..PlaybackSnapshot::default()
+        };
+        let loading = PlaybackSnapshot {
+            load_generation: 13,
+            state: PlaybackUiState::Loading,
+            ..ended.clone()
+        };
+
+        let changed = refresh_delay_drafts(&mut state, &ended);
+        assert!(!changed);
+        assert_eq!(
+            fullscreen_transition_action(changed, &ended, false, false),
+            None
+        );
+
+        let changed = refresh_delay_drafts(&mut state, &loading);
+        assert!(changed);
+        assert_eq!(
+            fullscreen_transition_action(changed, &loading, false, false),
+            Some(true)
+        );
     }
 
     #[test]
@@ -7818,10 +8475,12 @@ mod tests {
         let started = Instant::now();
         let metadata_arrived = loop {
             let events = state.library_worker.as_ref().unwrap().drain_events();
-            if events
-                .iter()
-                .any(|event| matches!(event, crate::library_worker::LibraryEvent::Metadata(1, _)))
-            {
+            if events.iter().any(|event| {
+                matches!(
+                    event,
+                    crate::library_worker::LibraryEvent::Metadata(1, _, _)
+                )
+            }) {
                 break true;
             }
             if started.elapsed() >= Duration::from_secs(2) {
@@ -8380,6 +9039,376 @@ mod tests {
         assert_eq!(details.artist, "Tagged artist");
         assert_eq!(details.artwork, Some(PathBuf::from("manual-cover.jpg")));
         assert!(details.artwork_override);
+    }
+
+    #[test]
+    fn automatic_artwork_cursor_skips_network_streams_before_local_music() {
+        let stream = Track {
+            source: TrackSource::Network(NetworkUrl::parse("https://example.com/live").unwrap()),
+            id: 1,
+            path: PathBuf::new(),
+            title: "Live stream".into(),
+            format: "STREAM".into(),
+        };
+        let mut state = AppState {
+            tracks: vec![
+                stream,
+                local_track(2, PathBuf::from("song.mp3"), "Song", "MP3"),
+            ],
+            ..AppState::default()
+        };
+        state.automatic_artwork_readiness.insert(2, false);
+
+        schedule_automatic_artwork(&mut state);
+
+        assert_eq!(state.automatic_artwork_cursor, 2);
+        assert!(state.automatic_artwork_readiness.is_empty());
+        assert_eq!(state.active_automatic_artwork, None);
+    }
+
+    #[test]
+    fn metadata_results_from_the_previous_path_are_ignored_after_relink() {
+        let state = AppState {
+            tracks: vec![local_track(
+                5,
+                PathBuf::from("new-name.mp3"),
+                "Moved song",
+                "MP3",
+            )],
+            ..AppState::default()
+        };
+
+        assert!(!metadata_event_path_matches(
+            &state,
+            5,
+            Path::new("old-name.mp3")
+        ));
+        assert!(metadata_event_path_matches(
+            &state,
+            5,
+            Path::new("new-name.mp3")
+        ));
+        assert!(!metadata_event_path_matches(
+            &state,
+            6,
+            Path::new("new-name.mp3")
+        ));
+    }
+
+    #[test]
+    fn automatic_tmdb_genres_require_video_missing_metadata_and_a_token() {
+        let mut state = AppState {
+            movies: vec![local_track(
+                12,
+                PathBuf::from("Shows/Sample Show.S01E03.mkv"),
+                "Sample Show S01E03",
+                super::MOVIE_FORMAT,
+            )],
+            ..AppState::default()
+        };
+        assert!(is_missing_tmdb_genre(&state, 12));
+        assert_eq!(
+            tmdb_genre_request(&state, 12).unwrap().kind,
+            ArtworkKind::Series
+        );
+        assert_eq!(tmdb_genre_request(&state, 12).unwrap().title, "Sample Show");
+        state.movies.push(Track {
+            source: TrackSource::Network(NetworkUrl::parse("https://example.com/movie").unwrap()),
+            id: 13,
+            path: PathBuf::new(),
+            title: "Network movie".into(),
+            format: super::MOVIE_FORMAT.into(),
+        });
+        state
+            .tracks
+            .push(local_track(14, PathBuf::from("song.mp3"), "Song", "MP3"));
+        assert!(!is_missing_tmdb_genre(&state, 13));
+        assert!(!is_missing_tmdb_genre(&state, 14));
+
+        queue_tmdb_genre_lookup(&mut state, 12);
+        assert!(state.tmdb_genre_queue.is_empty());
+        state.tmdb_token_available = true;
+        queue_tmdb_genre_lookup(&mut state, 12);
+        assert_eq!(state.tmdb_genre_queue, [12]);
+        state.details.entry(12).or_default().genre = "Drama".into();
+        state.tmdb_genre_queue.clear();
+        assert!(!is_missing_tmdb_genre(&state, 12));
+        queue_tmdb_genre_lookup(&mut state, 12);
+        assert!(state.tmdb_genre_queue.is_empty());
+    }
+
+    #[test]
+    fn automatic_tmdb_genre_results_are_generation_checked_and_never_overwrite_local_genre() {
+        let mut state = AppState {
+            movies: vec![local_track(
+                12,
+                PathBuf::from("movie.mkv"),
+                "Movie",
+                super::MOVIE_FORMAT,
+            )],
+            ..AppState::default()
+        };
+        state.tmdb_genre_inflight.insert(12, 8);
+        assert!(!apply_tmdb_genre_result(
+            &mut state,
+            12,
+            7,
+            Ok(Some("Action".into()))
+        ));
+        assert!(apply_tmdb_genre_result(
+            &mut state,
+            12,
+            8,
+            Ok(Some("Action".into()))
+        ));
+        assert_eq!(state.details[&12].genre, "Action");
+
+        state.details.get_mut(&12).unwrap().genre = "Drama".into();
+        state.tmdb_genre_inflight.insert(12, 9);
+        assert!(!apply_tmdb_genre_result(
+            &mut state,
+            12,
+            9,
+            Ok(Some("Comedy".into()))
+        ));
+        assert_eq!(state.details[&12].genre, "Drama");
+    }
+
+    #[test]
+    fn tmdb_genre_background_work_keeps_one_slot_and_retries_the_pending_item() {
+        let mut state = AppState {
+            movies: vec![
+                local_track(12, PathBuf::from("first.mkv"), "First", super::MOVIE_FORMAT),
+                local_track(
+                    13,
+                    PathBuf::from("second.mkv"),
+                    "Second",
+                    super::MOVIE_FORMAT,
+                ),
+            ],
+            tmdb_token_available: true,
+            ..AppState::default()
+        };
+        state.tmdb_genre_queue.push_back(13);
+        state.tmdb_genre_inflight.insert(12, 1);
+
+        schedule_tmdb_genre_lookups(&mut state);
+        assert_eq!(state.tmdb_genre_queue, [13]);
+        assert_eq!(state.tmdb_genre_inflight.len(), 1);
+
+        state.tmdb_genre_inflight.clear();
+        schedule_tmdb_genre_lookups(&mut state);
+        assert_eq!(state.tmdb_genre_queue, [13]);
+        assert!(state.tmdb_genre_inflight.is_empty());
+        assert!(state.feedback.contains("lookup worker stopped"));
+    }
+
+    #[test]
+    fn selected_tmdb_poster_is_applied_only_to_the_current_picker_intent() {
+        let mut state = AppState {
+            movies: vec![local_track(
+                4,
+                PathBuf::from("movie.mkv"),
+                "Movie",
+                super::MOVIE_FORMAT,
+            )],
+            tmdb_picker_target: Some((4, 3, ArtworkKind::Movie)),
+            artwork_intents: HashMap::from([(4, 3)]),
+            ..AppState::default()
+        };
+
+        assert!(!apply_tmdb_candidate_result(
+            &mut state,
+            4,
+            2,
+            Ok(TmdbArtwork {
+                poster: Some(PathBuf::from("cache/poster.webp")),
+                genre: "Action".into(),
+            })
+        ));
+        assert!(apply_tmdb_candidate_result(
+            &mut state,
+            4,
+            3,
+            Ok(TmdbArtwork {
+                poster: Some(PathBuf::from("cache/poster.webp")),
+                genre: "Action".into(),
+            })
+        ));
+        assert_eq!(
+            state.details[&4].artwork,
+            Some(PathBuf::from("cache/poster.webp"))
+        );
+        assert!(state.details[&4].artwork_override);
+        assert_eq!(state.details[&4].genre, "Action");
+        assert!(state.tmdb_picker_target.is_none());
+
+        let mut state = AppState {
+            movies: vec![local_track(
+                4,
+                PathBuf::from("movie.mkv"),
+                "Movie",
+                super::MOVIE_FORMAT,
+            )],
+            details: HashMap::from([(
+                4,
+                MediaDetails {
+                    genre: "Drama".into(),
+                    ..MediaDetails::default()
+                },
+            )]),
+            tmdb_picker_target: Some((4, 3, ArtworkKind::Movie)),
+            artwork_intents: HashMap::from([(4, 3)]),
+            ..AppState::default()
+        };
+        apply_tmdb_candidate_result(
+            &mut state,
+            4,
+            3,
+            Ok(TmdbArtwork {
+                poster: Some(PathBuf::from("cache/poster.webp")),
+                genre: "Action".into(),
+            }),
+        );
+        assert_eq!(state.details[&4].genre, "Drama");
+    }
+
+    #[test]
+    fn relinking_updates_library_identity_without_removing_media_or_history() {
+        let directory = std::env::temp_dir().join(format!(
+            "rust-vlc-relink-{}-{}",
+            std::process::id(),
+            fastrand::u64(..)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let old_path = directory.join("old.mp3");
+        let moved_path = directory.join("moved.flac");
+        std::fs::write(&old_path, b"old media").unwrap();
+        std::fs::write(&moved_path, b"new media").unwrap();
+        let old_identity = path_identity_key(&old_path);
+        let mut state = AppState {
+            tracks: vec![local_track(7, old_path.clone(), "Original title", "MP3")],
+            unavailable_media: HashSet::from([7]),
+            file_fingerprints: HashMap::from([(
+                old_identity.clone(),
+                crate::scan::FileFingerprint {
+                    path: old_path.clone(),
+                    size: 9,
+                    modified: None,
+                },
+            )]),
+            progress: HashMap::from([(
+                7,
+                Progress {
+                    media_id: 7,
+                    position_ms: 1_234,
+                    duration_ms: 10_000,
+                    completed: false,
+                },
+            )]),
+            ..AppState::default()
+        };
+        let snapshot = Arc::new(Mutex::new(PlaybackSnapshot::default()));
+        let (sender, receiver) = mpsc::sync_channel(2);
+
+        relink_media(&mut state, 7, moved_path.clone(), &sender, &snapshot).unwrap();
+
+        let PlaybackCommand::UpdateTrackData { track } = receiver.try_recv().unwrap() else {
+            panic!("relink should update queue copies without starting playback");
+        };
+        let canonical = moved_path.canonicalize().unwrap();
+        assert_eq!(track.id, 7);
+        assert_eq!(track.path, canonical);
+        assert_eq!(track.format, "FLAC");
+        assert_eq!(state.tracks[0].path, canonical);
+        assert_eq!(state.tracks[0].format, "FLAC");
+        assert!(!state.unavailable_media.contains(&7));
+        assert_eq!(state.progress[&7].position_ms, 1_234);
+        assert!(!state.file_fingerprints.contains_key(&old_identity));
+        assert!(state
+            .file_fingerprints
+            .contains_key(&path_identity_key(&canonical)));
+        assert_eq!(state.pending_metadata, [7]);
+        assert!(old_path.is_file(), "relinking must not delete source media");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_media_rows_offer_relink_even_without_an_unavailable_marker() {
+        let network_audio = Track {
+            source: TrackSource::Network(NetworkUrl::parse("https://example.com/live").unwrap()),
+            id: 2,
+            path: PathBuf::new(),
+            title: "Network audio".into(),
+            format: "STREAM".into(),
+        };
+        let network_movie = Track {
+            source: TrackSource::Network(NetworkUrl::parse("https://example.com/movie").unwrap()),
+            id: 4,
+            path: PathBuf::new(),
+            title: "Network movie".into(),
+            format: super::MOVIE_FORMAT.into(),
+        };
+        let tracks = vec![
+            local_track(1, PathBuf::from("song.mp3"), "Song", "MP3"),
+            network_audio,
+        ];
+        let movies = vec![
+            local_track(3, PathBuf::from("movie.mkv"), "Movie", super::MOVIE_FORMAT),
+            network_movie,
+        ];
+        let mut state = AppState {
+            tracks: tracks.clone(),
+            ..AppState::default()
+        };
+
+        let music = music_rows(&mut state, &tracks, 0, &[], &PlaybackSnapshot::default());
+        let episodes = episode_rows(&mut state, &movies, 0);
+
+        assert!(music[0].local_media);
+        assert!(!music[0].unavailable);
+        assert!(!music[1].local_media);
+        assert!(episodes[0].local_media);
+        assert!(!episodes[0].unavailable);
+        assert!(!episodes[1].local_media);
+    }
+
+    #[test]
+    fn relinking_rejects_media_type_changes_and_destination_collisions() {
+        let directory = std::env::temp_dir().join(format!(
+            "rust-vlc-relink-collision-{}-{}",
+            std::process::id(),
+            fastrand::u64(..)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let first = directory.join("first.mp3");
+        let second = directory.join("second.mp3");
+        let video = directory.join("movie.mp4");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        std::fs::write(&video, b"video").unwrap();
+        let mut state = AppState {
+            tracks: vec![
+                local_track(1, first.clone(), "First", "MP3"),
+                local_track(2, second.clone(), "Second", "MP3"),
+            ],
+            ..AppState::default()
+        };
+        let snapshot = Arc::new(Mutex::new(PlaybackSnapshot::default()));
+        let (sender, receiver) = mpsc::sync_channel(2);
+
+        assert!(relink_media(&mut state, 1, second, &sender, &snapshot)
+            .unwrap_err()
+            .contains("already linked"));
+        assert!(relink_media(&mut state, 1, video, &sender, &snapshot)
+            .unwrap_err()
+            .contains("same media type"));
+        assert_eq!(state.tracks[0].path, first);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

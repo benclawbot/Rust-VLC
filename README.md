@@ -2,15 +2,15 @@
 
 A local movie and music player built with Rust, Slint and libVLC 3, inspired by [VLC Première](https://github.com/benclawbot/VLC-Premiere). Movies and Music share one player, so browsing another collection keeps playback running.
 
-The current release is **0.1.2**. See the [release notes](docs/RELEASE_0.1.2.md) for the latest changes.
+The current release is **0.1.3**. See the [release notes](docs/RELEASE_0.1.3.md) for the latest changes.
 
 ## Get the application
 
-Download an installer from the [Rust-VLC v0.1.2 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.2). Each installer has a matching `.sha256` checksum beside it.
+Download an installer from the [Rust-VLC v0.1.3 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.3). Each installer has a matching `.sha256` checksum beside it.
 
 | Platform | Installer | Install |
 | --- | --- | --- |
-| Arch Linux x86_64 | `rust-vlc-0.1.2-1-x86_64.pkg.tar.zst` | Run `sudo pacman -U rust-vlc-0.1.2-1-x86_64.pkg.tar.zst`; pacman installs libVLC 3 and the full plugin set as dependencies |
+| Arch Linux x86_64 | `rust-vlc-0.1.3-1-x86_64.pkg.tar.zst` | Run `sudo pacman -U rust-vlc-0.1.3-1-x86_64.pkg.tar.zst`; pacman installs libVLC 3 and the full plugin set as dependencies |
 | Windows x86_64 | `rust-vlc-windows-x86_64-setup.exe` | Run Setup; it includes VLC 3 and creates a desktop shortcut by default |
 | macOS Apple Silicon | `rust-vlc-macos-arm64.pkg` | Open the package; it installs Rust-VLC and its VLC runtime in Applications |
 | macOS Intel | `rust-vlc-macos-x86_64.pkg` | Open the package; it installs Rust-VLC and its VLC runtime in Applications |
@@ -30,6 +30,8 @@ Add local files or import a folder. Imported folders become watched folders: the
 
 Missing files and unavailable VLC plugins remain visible as errors rather than being silently removed from the library. A future database schema is preserved; recognized upgrades first create a recovery backup. Library databases retain native paths and are specific to the operating system that created them.
 
+Use **Locate file** or **Relink file** to point a local library entry at a moved file. Its playlists, history and bookmarks remain attached to the same entry. Only one current-version instance can open a library at a time; close older versions before upgrading or opening the same library.
+
 The queue, current occurrence and position, repeat mode and shuffled traversal survive restart. Restored queues wait for an explicit Play action; opening the app never autoplays.
 
 ## Playback tools and network media
@@ -46,8 +48,8 @@ Configure an **OpenSubtitles API key** in Options to search by title and languag
 
 Local tags, embedded pictures and nearby `cover`, `folder` or `poster` images are read first. Online artwork requests contain music or movie metadata, never local file paths.
 
-- **Movies and TV:** choose **Options → Artwork** to save a TMDB Read Access Token. It is stored in the operating system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service) and never in the library database. `TMDB_READ_TOKEN` remains available for existing environment-based setups.
-- **Music:** after local tags are read, the background artwork worker searches public YouTube results with the track title and artist. It applies a thumbnail only when the match is strong, then uses the existing MusicBrainz/Cover Art Archive lookup as a fallback. The fallback can also send the album tag. No per-song YouTube URL is required.
+- **Movies and TV:** choose **Options → Artwork** to save a TMDB Read Access Token. The app can automatically look up missing genres using the title and year; existing genres are kept. Use **Choose poster** to review and select a TMDB result. The token is stored in the operating system credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service), never in the library database. `TMDB_READ_TOKEN` remains available for existing environment-based setups.
+- **Music:** after local tags are read, the background artwork worker searches public YouTube results with the track title and artist. It applies a thumbnail only when the match is strong. The fallback can send the album tag to MusicBrainz and download artwork from Cover Art Archive. No per-song YouTube URL is required.
 
 OpenSubtitles credentials use the same operating system credential store as the TMDB token, never the library database. Stored secrets are not prefilled or logged. Subtitle searches send title/language metadata rather than native media paths.
 
@@ -89,4 +91,4 @@ cargo build --release --locked
 cargo audit --file Cargo.lock
 ```
 
-The [build workflow](.github/workflows/dev-artifacts.yml) creates development archives on native runners. The [release workflow](.github/workflows/release-installers.yml) builds the Arch package, Windows Setup executable, and separate Apple Silicon and Intel macOS packages, verifies their checksums and audits the locked Rust dependencies before publication. Source builds still require a compatible VLC 3 installation. Linux OS media controls use the desktop D-Bus session; unavailable OS integration does not prevent local playback. Runtime-dependent tests are explicitly ignored by the default suite and run separately when VLC, codecs or network access are available.
+The [build workflow](.github/workflows/dev-artifacts.yml) creates development archives on native runners. The [release workflow](.github/workflows/release-installers.yml) builds the Arch package, Windows Setup executable, and separate Apple Silicon and Intel macOS packages, verifies their checksums and audits the locked Rust dependencies before publication. It also checks clean installation and upgrade from 0.1.2 on disposable runners, including retention of a synthetic library database; those checks do not exercise the graphical interface or playback. Source builds still require a compatible VLC 3 installation. Linux OS media controls use the desktop D-Bus session; unavailable OS integration does not prevent local playback. Runtime-dependent tests are explicitly ignored by the default suite and run separately when VLC, codecs or network access are available.

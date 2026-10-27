@@ -3,6 +3,7 @@ use crate::playback::queue::{QueueCheckpoint, RepeatMode};
 use crate::playlists::Playlist;
 use rusqlite::{params, Connection, OptionalExtension, MAIN_DB};
 use std::collections::HashSet;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -97,6 +98,39 @@ pub fn application_directories() -> Result<(PathBuf, PathBuf), String> {
         dirs.data_local_dir().join("library.sqlite3"),
         dirs.cache_dir().to_owned(),
     ))
+}
+
+#[derive(Debug)]
+pub struct LibraryLock {
+    _file: File,
+}
+
+impl LibraryLock {
+    pub fn try_acquire(database_path: &Path) -> Result<Self, String> {
+        let mut lock_path = database_path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(PathBuf::from(lock_path))
+            .map_err(|error| {
+                format!(
+                    "Could not create the library lock ({error}). The database was not opened; check application data folder permissions."
+                )
+            })?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(std::fs::TryLockError::WouldBlock) => Err(
+                "Another Rust-VLC instance is already using this library. Close it before launching Rust-VLC again."
+                    .into(),
+            ),
+            Err(std::fs::TryLockError::Error(error)) => Err(format!(
+                "Could not secure exclusive use of the library ({error}). The database was not opened; check application data folder permissions."
+            )),
+        }
+    }
 }
 
 pub struct LibraryStore {
@@ -978,6 +1012,16 @@ fn decode_path(bytes: &[u8], encoding: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::{Child, Command, Stdio};
+
+    struct KillOnDrop(Child);
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 
     fn test_path() -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -985,6 +1029,74 @@ mod tests {
             std::process::id(),
             fastrand::u64(..)
         ))
+    }
+
+    #[test]
+    fn library_lock_process_helper() {
+        if std::env::var_os("RUST_VLC_LIBRARY_LOCK_HELPER").is_none() {
+            return;
+        }
+        let (Some(database), Some(ready)) = (
+            std::env::var_os("RUST_VLC_LIBRARY_LOCK_PATH"),
+            std::env::var_os("RUST_VLC_LIBRARY_LOCK_READY"),
+        ) else {
+            return;
+        };
+        let _lock = LibraryLock::try_acquire(&PathBuf::from(database)).unwrap();
+        std::fs::write(ready, b"held").unwrap();
+        std::thread::sleep(Duration::from_secs(60));
+    }
+
+    #[test]
+    fn library_lock_blocks_another_process_and_recovers_after_termination() {
+        let database = test_path();
+        let mut ready = database.as_os_str().to_os_string();
+        ready.push(".ready");
+        let ready = PathBuf::from(ready);
+        let mut child = KillOnDrop(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "storage::tests::library_lock_process_helper",
+                    "--nocapture",
+                ])
+                .env("RUST_VLC_LIBRARY_LOCK_HELPER", "1")
+                .env("RUST_VLC_LIBRARY_LOCK_PATH", &database)
+                .env("RUST_VLC_LIBRARY_LOCK_READY", &ready)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !ready.exists() {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                panic!("library lock process exited before acquiring its lock: {status}");
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "library lock process did not acquire its lock in time"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let error = LibraryLock::try_acquire(&database).unwrap_err();
+        assert!(error.contains("already using this library"), "{error}");
+        let mut lock_path = database.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let lock_path = PathBuf::from(lock_path);
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        std::fs::remove_file(&ready).unwrap();
+        assert!(lock_path.is_file(), "the lock file must not be unlinked");
+
+        let lock = LibraryLock::try_acquire(&database).unwrap();
+        drop(lock);
+        assert!(
+            lock_path.is_file(),
+            "dropping the guard must not unlink the lock file"
+        );
+        LibraryLock::try_acquire(&database).unwrap();
     }
 
     fn offline_native_root() -> PathBuf {

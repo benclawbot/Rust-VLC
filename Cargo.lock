@@ -4855,7 +4855,7 @@ dependencies = [
 
 [[package]]
 name = "rust-vlc"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "directories",
  "fastrand 2.5.0",

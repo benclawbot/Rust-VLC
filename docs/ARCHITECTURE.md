@@ -1,6 +1,6 @@
 # Architecture
 
-Implementation snapshot: 2026-10-26, source version 0.1.2. Rust-VLC is one Rust package with a Slint interface and a dynamically loaded libVLC 3 runtime. The expanded implementation is undergoing integrated review; native Arch Wayland/X11 and macOS playback qualification remain open. See [validation](VALIDATION.md) for evidence rather than inferring support from compilation.
+Implementation snapshot: 2026-10-27, source version 0.1.3. Rust-VLC is one Rust package with a Slint interface and a dynamically loaded libVLC 3 runtime. Native Arch Wayland/X11 and macOS playback qualification remain open. See [validation](VALIDATION.md) for evidence rather than inferring support from compilation.
 
 ## Modules and dependencies
 
@@ -62,11 +62,11 @@ Watched roots persist as native paths and are scanned at startup, periodically a
 
 Local metadata uses filename fallback, embedded artwork, then named nearby cover/folder/poster images. A manual artwork override survives later metadata reads.
 
-TMDB artwork starts through the explicit movie/TV artwork action. The token comes from the system credential store, with `TMDB_READ_TOKEN` retained as a fallback for existing setups; it is sent only to the TMDB API host. Automatic music artwork starts after local metadata loading when embedded and nearby art are absent. It searches public YouTube results with the tagged track title and artist, accepts only strong matches, and falls back to MusicBrainz/Cover Art Archive, which may also receive the album tag. This uses a bounded parser for public `ytInitialData` and does not run page JavaScript or use sign-in cookies. Requests never contain native media paths.
+TMDB poster selection starts through an explicit movie/TV artwork action. When a token is available, missing movie and TV genres are also looked up automatically using title and year. Existing genres are retained, and ambiguous or incomplete searches are not applied. The token comes from the system credential store, with `TMDB_READ_TOKEN` retained as a fallback for existing setups; it is sent only to the TMDB API host. Automatic music artwork starts after local metadata loading when embedded and nearby art are absent. It searches public YouTube results with the tagged track title and artist, accepts only strong matches, and falls back to MusicBrainz/Cover Art Archive, which may also receive the album tag. This uses a bounded parser for public `ytInitialData` and does not run page JavaScript or use sign-in cookies. Requests never contain native media paths.
 
 Authorization is confined to TMDB's API host. Redirects and provider hosts are validated. Responses, dimensions, decoded memory, disk cache, request duration and job counts are bounded. Matching rejects ambiguity; positive results and temporary negative results are cached separately. Downloaded art is validated and reduced to thumbnails, with a 256 MiB cache budget. The UI also bounds loaded artwork and visible rows.
 
-Artist and genre cards derive artwork from matching local tracks; they do not claim dedicated artist photography. Movie genre metadata is not yet populated from TMDB search results, so movie genre filtering depends on genre data already stored with a library item. Landscape backdrops and a provider-candidate picker remain follow-on work. The TMDB token is stored through the native Windows Credential Manager, macOS Keychain or Linux Secret Service; on Linux the user session must have a Secret Service provider running. Error messages do not include credentials.
+Artist and genre cards derive artwork from matching local tracks; they do not claim dedicated artist photography. The TMDB poster picker presents candidates for manual selection. Landscape backdrops remain follow-on work. The TMDB token is stored through the native Windows Credential Manager, macOS Keychain or Linux Secret Service; on Linux the user session must have a Secret Service provider running. Error messages do not include credentials.
 
 ## Development executables
 

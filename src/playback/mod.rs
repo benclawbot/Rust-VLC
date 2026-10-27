@@ -307,6 +307,9 @@ pub enum PlaybackCommand {
         revision: u64,
         tracks: Vec<Track>,
     },
+    UpdateTrackData {
+        track: Track,
+    },
     PlayNext {
         track: Track,
     },
@@ -413,6 +416,13 @@ fn invalid_command_message(command: &PlaybackCommand) -> Option<String> {
                     != checkpoint.entry_ids =>
         {
             Some("The saved playback queue is invalid.".to_owned())
+        }
+        PlaybackCommand::UpdateTrackData { track }
+            if track.id <= 0
+                || track.path.as_os_str().is_empty()
+                || track.source != TrackSource::Local =>
+        {
+            Some("The updated queue entry is invalid.".to_owned())
         }
         PlaybackCommand::SetVolume { volume_percent, .. }
             if !valid_volume_percent(*volume_percent) =>
@@ -601,9 +611,6 @@ fn prepare_replay(worker: &mut WorkerState, snapshot: &Mutex<PlaybackSnapshot>) 
         snapshot,
         "Seek was canceled because playback restarted.",
     );
-    publish(snapshot, |state| {
-        state.load_generation = worker.load_generation
-    });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1802,6 +1809,28 @@ fn handle_command(
                 Err(message) => publish(snapshot, |state| state.message = message),
             }
         }
+        PlaybackCommand::UpdateTrackData { track } => {
+            let has_conflicting_type = worker
+                .queue
+                .ordered_entries()
+                .into_iter()
+                .any(|entry| entry.id == track.id && is_movie(entry) != is_movie(&track));
+            if has_conflicting_type {
+                publish(snapshot, |state| {
+                    state.message = "A queue entry cannot change between audio and video.".into()
+                });
+            } else if worker.queue.replace_track_data(&track) > 0 {
+                worker.queue_revision = worker.queue_revision.wrapping_add(1);
+                publish_queue_snapshot(&worker.queue, worker.queue_revision, snapshot);
+                if worker
+                    .queue
+                    .current()
+                    .is_some_and(|current| current.id == track.id)
+                {
+                    publish(snapshot, |state| state.current_title = track.title.clone());
+                }
+            }
+        }
         PlaybackCommand::PlayNext { track } => {
             let was_empty = worker.queue.insert_next(track);
             worker.queue_revision = worker.queue_revision.wrapping_add(1);
@@ -2960,7 +2989,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_from_ended_starts_a_new_load_and_cancels_pending_seek() {
+    fn replay_from_ended_defers_snapshot_generation_until_loading() {
         let mut worker = WorkerState {
             generation: 4,
             load_generation: 12,
@@ -2970,6 +2999,7 @@ mod tests {
         };
         let snapshot = Mutex::new(PlaybackSnapshot {
             load_generation: 12,
+            state: PlaybackUiState::Ended,
             ..PlaybackSnapshot::default()
         });
 
@@ -2980,7 +3010,8 @@ mod tests {
         assert_eq!(worker.ended_generation, None);
         assert_eq!(worker.pending_seek, None);
         let snapshot = snapshot.lock().unwrap();
-        assert_eq!(snapshot.load_generation, 13);
+        assert_eq!(snapshot.load_generation, 12);
+        assert_eq!(snapshot.state, PlaybackUiState::Ended);
         assert_eq!(snapshot.seek_ack.request_id, 7);
         assert!(!snapshot.seek_ack.succeeded);
         assert!(snapshot.message.contains("playback restarted"));
@@ -3245,6 +3276,61 @@ mod tests {
         assert!(snapshot
             .message
             .contains("Updated the active playlist queue"));
+    }
+
+    #[test]
+    fn updated_queue_track_data_does_not_restart_the_active_input() {
+        let mut worker = WorkerState::default();
+        assert!(worker.queue.replace(vec![track(1), track(2), track(1)], 2));
+        worker.queue_revision = 4;
+        worker.load_generation = 12;
+        let snapshot = Mutex::new(PlaybackSnapshot {
+            current_id: Some(1),
+            load_generation: 12,
+            current_title: "Track 1".to_owned(),
+            state: PlaybackUiState::Paused,
+            position_ms: 4_321,
+            duration_ms: 12_000,
+            ..PlaybackSnapshot::default()
+        });
+        let mut engine = None;
+        let frames = FrameMailbox::default();
+        let updated = Track {
+            path: PathBuf::from("moved/track-1.mp3"),
+            title: "Relinked track".into(),
+            ..track(1)
+        };
+
+        handle_command(
+            PlaybackCommand::UpdateTrackData {
+                track: updated.clone(),
+            },
+            &mut engine,
+            &mut worker,
+            &snapshot,
+            &frames,
+            "runtime unavailable",
+        );
+
+        assert_eq!(worker.queue_revision, 5);
+        assert_eq!(worker.queue.current_index(), Some(2));
+        assert_eq!(worker.queue.current(), Some(&updated));
+        assert_eq!(
+            worker.queue.ordered_entries()[0],
+            worker.queue.ordered_entries()[2]
+        );
+        let snapshot = snapshot.lock().unwrap();
+        assert_eq!(snapshot.current_id, Some(1));
+        assert_eq!(snapshot.current_title, "Relinked track");
+        assert_eq!(snapshot.load_generation, 12);
+        assert_eq!(snapshot.state, PlaybackUiState::Paused);
+        assert_eq!(snapshot.position_ms, 4_321);
+        assert_eq!(snapshot.duration_ms, 12_000);
+        assert_eq!(
+            snapshot.queue_titles,
+            ["Relinked track", "Track 2", "Relinked track"]
+        );
+        assert_eq!(snapshot.queue_checkpoint.entry_ids, [1, 2, 1]);
     }
 
     #[test]

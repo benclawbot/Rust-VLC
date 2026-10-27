@@ -146,6 +146,18 @@ impl PlaybackQueue {
             .collect()
     }
 
+    /// Replace every queued occurrence for a media ID without changing traversal state.
+    pub fn replace_track_data(&mut self, updated: &Track) -> usize {
+        let mut replaced = 0;
+        for entry in &mut self.entries {
+            if entry.id == updated.id {
+                *entry = updated.clone();
+                replaced += 1;
+            }
+        }
+        replaced
+    }
+
     pub fn traversal_position(&self) -> Option<usize> {
         self.position
     }
@@ -406,6 +418,34 @@ mod tests {
         assert_eq!(queue.previous().unwrap().id, 2);
         assert_eq!(queue.previous().unwrap().id, 7);
         assert_eq!(queue.previous().unwrap().id, 7);
+    }
+
+    #[test]
+    fn replacing_track_data_updates_every_occurrence_without_changing_traversal() {
+        let mut queue = PlaybackQueue::default();
+        assert!(queue.replace(vec![track(1), track(2), track(1)], 2));
+        let current_index = queue.current_index();
+        let updated = Track {
+            path: PathBuf::from("moved/track-1.mp3"),
+            title: "Track one".into(),
+            ..track(1)
+        };
+
+        assert_eq!(queue.replace_track_data(&updated), 2);
+        assert_eq!(queue.current_index(), current_index);
+        assert_eq!(queue.current().unwrap(), &updated);
+        assert_eq!(
+            queue
+                .ordered_entries()
+                .into_iter()
+                .filter(|entry| entry.id == 1)
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("moved/track-1.mp3"),
+                PathBuf::from("moved/track-1.mp3")
+            ]
+        );
     }
 
     #[test]

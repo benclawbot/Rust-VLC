@@ -11,6 +11,7 @@ use reqwest::{StatusCode, Url};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Read, Write};
@@ -26,6 +27,8 @@ const MAX_ARTWORK_DIMENSION: u32 = 8192;
 const MAX_CACHED_ARTWORK_DIMENSION: u32 = 512;
 const ARTWORK_CACHE_BUDGET: u64 = 256 * 1024 * 1024;
 const MAX_JSON_BYTES: usize = 1024 * 1024;
+const MAX_TMDB_CANDIDATES: usize = 8;
+const MAX_TMDB_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
 const MAX_YOUTUBE_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_YOUTUBE_INITIAL_DATA_BYTES: usize = MAX_JSON_BYTES;
 const MAX_YOUTUBE_JSON_NODES: usize = 20_000;
@@ -75,6 +78,21 @@ pub struct ArtworkRequest {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub kind: ArtworkKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TmdbCandidate {
+    pub id: u64,
+    pub title: String,
+    pub year: Option<u16>,
+    pub poster: Option<PathBuf>,
+    pub genre: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TmdbArtwork {
+    pub poster: Option<PathBuf>,
+    pub genre: String,
 }
 
 pub(crate) fn automatic_music_artwork_request(metadata: &LocalMetadata) -> Option<ArtworkRequest> {
@@ -183,6 +201,166 @@ pub(crate) fn lookup_artwork_with_cancel(
     check_cancelled(stopping)?;
     store_lookup_cache(cache, &key, artwork.as_deref(), bytes.is_none())?;
     Ok(artwork)
+}
+
+pub(crate) fn search_tmdb_candidates_with_cancel(
+    request: &ArtworkRequest,
+    cache: &Path,
+    tmdb_token: Option<&str>,
+    stopping: &AtomicBool,
+) -> Result<Vec<TmdbCandidate>, String> {
+    check_cancelled(stopping)?;
+    validate_request(request)?;
+    if request.kind == ArtworkKind::Music {
+        return Err("TMDB artwork is only available for video.".to_owned());
+    }
+    let token = validate_tmdb_token(tmdb_token)?;
+    let client = http_client()?;
+    let (title, year) = parse_artwork_title(&request.title);
+    let search_url = tmdb_search_url(request.kind, &title, year)?;
+    let response = send_tmdb_json(&client, client.get(search_url), token, stopping)?;
+    check_cancelled(stopping)?;
+
+    let genres_url = tmdb_genres_url(request.kind)?;
+    let genre_names = send_tmdb_json(&client, client.get(genres_url), token, stopping)?;
+    let genre_names = tmdb_genre_name_map(&genre_names)?;
+    let parsed = parse_tmdb_candidates(&response, &genre_names, request.kind)?;
+    if parsed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = parsed
+        .iter()
+        .map(|(candidate, _)| candidate.clone())
+        .collect::<Vec<_>>();
+    let previews = parsed
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, (_, poster_path))| poster_path.map(|path| (index, path)))
+        .collect::<Vec<_>>();
+    if !previews.is_empty() {
+        let configuration_url = tmdb_configuration_url()?;
+        let configuration =
+            send_tmdb_json(&client, client.get(configuration_url), token, stopping)?;
+        let preview_urls = previews
+            .into_iter()
+            .filter_map(|(index, poster_path)| {
+                tmdb_image_url_for_size(&configuration, &poster_path, Some("w185"))
+                    .ok()
+                    .map(|url| (index, url))
+            })
+            .collect::<Vec<_>>();
+        download_tmdb_previews(&client, preview_urls, &mut candidates, cache, stopping)?;
+    }
+    check_cancelled(stopping)?;
+    Ok(candidates)
+}
+
+pub(crate) fn download_tmdb_candidate_with_cancel(
+    kind: ArtworkKind,
+    tmdb_id: u64,
+    cache: &Path,
+    tmdb_token: Option<&str>,
+    stopping: &AtomicBool,
+) -> Result<TmdbArtwork, String> {
+    check_cancelled(stopping)?;
+    if kind == ArtworkKind::Music || tmdb_id == 0 {
+        return Err("The TMDB candidate is invalid.".to_owned());
+    }
+    let token = validate_tmdb_token(tmdb_token)?;
+    let client = http_client()?;
+    let detail_url = tmdb_detail_url(kind, tmdb_id)?;
+    let details = send_tmdb_json(&client, client.get(detail_url), token, stopping)?;
+    if details.get("id").and_then(Value::as_u64) != Some(tmdb_id) {
+        return Err("TMDB returned a different candidate.".to_owned());
+    }
+    let genre = tmdb_detail_genres(&details);
+    let Some(poster_path) = details
+        .get("poster_path")
+        .and_then(Value::as_str)
+        .filter(|path| safe_tmdb_image_path(path))
+    else {
+        return Ok(TmdbArtwork {
+            poster: None,
+            genre,
+        });
+    };
+
+    let configuration_url = tmdb_configuration_url()?;
+    let configuration = send_tmdb_json(&client, client.get(configuration_url), token, stopping)?;
+    let image_url = tmdb_image_url(&configuration, poster_path)?;
+    let poster = fetch_image(&client, image_url, is_tmdb_image_url, stopping)?
+        .map(|bytes| cache_artwork(&bytes, cache))
+        .transpose()?;
+    check_cancelled(stopping)?;
+    Ok(TmdbArtwork { poster, genre })
+}
+
+pub(crate) fn lookup_tmdb_genres_with_cancel(
+    request: &ArtworkRequest,
+    cache: &Path,
+    tmdb_token: Option<&str>,
+    stopping: &AtomicBool,
+) -> Result<Option<String>, String> {
+    check_cancelled(stopping)?;
+    validate_request(request)?;
+    if request.kind == ArtworkKind::Music {
+        return Err("TMDB genres are only available for movies and TV.".to_owned());
+    }
+    let Some(token) = tmdb_token.filter(|token| !token.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let token = validate_tmdb_token(Some(token))?;
+    let key = request_cache_key("tmdb-genres", request);
+    if let Some(genre) = read_tmdb_genre_cache(cache, &key) {
+        return Ok(genre);
+    }
+
+    let genre_result = (|| {
+        let client = http_client()?;
+        let (title, year) = parse_artwork_title(&request.title);
+        let search_url = tmdb_search_url(request.kind, &title, year)?;
+        let response = send_tmdb_json(&client, client.get(search_url), token, stopping)?;
+        validate_tmdb_search_response(&response)?;
+        check_cancelled(stopping)?;
+        let (match_title, match_year, response) = if let Some((secondary_title, secondary_year)) =
+            secondary_tmdb_identity(&response, &title, year, request.kind)
+        {
+            let secondary_url =
+                tmdb_search_url(request.kind, &secondary_title, Some(secondary_year))?;
+            let secondary_response =
+                send_tmdb_json(&client, client.get(secondary_url), token, stopping)?;
+            validate_tmdb_search_response(&secondary_response)?;
+            (secondary_title, Some(secondary_year), secondary_response)
+        } else {
+            (title, year, response)
+        };
+        check_cancelled(stopping)?;
+        unique_tmdb_id(&response, &match_title, match_year, request.kind)
+            .map(|id| {
+                let detail_url = tmdb_detail_url(request.kind, id)?;
+                let details = send_tmdb_json(&client, client.get(detail_url), token, stopping)?;
+                if details.get("id").and_then(Value::as_u64) != Some(id) {
+                    return Err("TMDB returned a different candidate.".to_owned());
+                }
+                let genres = tmdb_detail_genres(&details);
+                Ok((!genres.is_empty()).then_some(genres))
+            })
+            .transpose()
+            .map(Option::flatten)
+    })();
+    check_cancelled(stopping)?;
+    cache_tmdb_genre_result(cache, &key, genre_result)
+}
+
+fn validate_tmdb_token(tmdb_token: Option<&str>) -> Result<&str, String> {
+    let token = tmdb_token
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| "A TMDB read token is required for movie or TV artwork.".to_owned())?;
+    if token.len() > 8192 || token.contains(['\r', '\n']) {
+        return Err("The TMDB token is invalid.".to_owned());
+    }
+    Ok(token)
 }
 
 /// Cache a thumbnail for a video URL or ID supplied directly by the user.
@@ -741,6 +919,7 @@ fn lookup_tmdb(
     let (title, year) = parse_artwork_title(&request.title);
     let search_url = tmdb_search_url(request.kind, &title, year)?;
     let results = send_tmdb_json(client, client.get(search_url), token, stopping)?;
+    validate_tmdb_search_response(&results)?;
     check_cancelled(stopping)?;
     let poster_path = if let Some((secondary_title, secondary_year)) =
         secondary_tmdb_identity(&results, &title, year, request.kind)
@@ -748,6 +927,7 @@ fn lookup_tmdb(
         check_cancelled(stopping)?;
         let secondary_url = tmdb_search_url(request.kind, &secondary_title, Some(secondary_year))?;
         let secondary_results = send_tmdb_json(client, client.get(secondary_url), token, stopping)?;
+        validate_tmdb_search_response(&secondary_results)?;
         check_cancelled(stopping)?;
         unique_tmdb_poster(
             &secondary_results,
@@ -766,11 +946,19 @@ fn lookup_tmdb(
 }
 
 fn is_tmdb_api_url(url: &Url) -> bool {
-    url.scheme() == "https" && url.host_str() == Some(TMDB_API_HOST)
+    url.scheme() == "https"
+        && url.host_str() == Some(TMDB_API_HOST)
+        && matches!(url.port(), None | Some(443))
+        && url.username().is_empty()
+        && url.password().is_none()
 }
 
 fn is_tmdb_image_url(url: &Url) -> bool {
-    url.scheme() == "https" && url.host_str() == Some(TMDB_IMAGE_HOST)
+    url.scheme() == "https"
+        && url.host_str() == Some(TMDB_IMAGE_HOST)
+        && matches!(url.port(), None | Some(443))
+        && url.username().is_empty()
+        && url.password().is_none()
 }
 
 fn tmdb_search_url(kind: ArtworkKind, title: &str, year: Option<u16>) -> Result<Url, String> {
@@ -791,6 +979,213 @@ fn tmdb_search_url(kind: ArtworkKind, title: &str, year: Option<u16>) -> Result<
     }
     drop(query);
     Ok(url)
+}
+
+fn validate_tmdb_search_response(response: &Value) -> Result<(), String> {
+    let results = response
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "TMDB returned an invalid search response.".to_owned())?;
+    if response.get("page").and_then(Value::as_u64) != Some(1) {
+        return Err("TMDB returned an invalid search response.".to_owned());
+    }
+    let total_pages = response
+        .get("total_pages")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "TMDB returned an invalid search response.".to_owned())?;
+    if total_pages > 1 || (total_pages == 0 && !results.is_empty()) {
+        return Err("TMDB returned an incomplete search response.".to_owned());
+    }
+    Ok(())
+}
+
+fn tmdb_genres_url(kind: ArtworkKind) -> Result<Url, String> {
+    let endpoint = match kind {
+        ArtworkKind::Movie => "movie",
+        ArtworkKind::Series => "tv",
+        ArtworkKind::Music => return Err("TMDB artwork is only available for video.".to_owned()),
+    };
+    let url = Url::parse(&format!(
+        "{TMDB_API_BASE}/genre/{endpoint}/list?language=en-US"
+    ))
+    .map_err(|_| "TMDB genre URL is invalid.".to_owned())?;
+    if !is_tmdb_api_url(&url) {
+        return Err("TMDB genre host is invalid.".to_owned());
+    }
+    Ok(url)
+}
+
+fn tmdb_detail_url(kind: ArtworkKind, id: u64) -> Result<Url, String> {
+    let endpoint = match kind {
+        ArtworkKind::Movie => "movie",
+        ArtworkKind::Series => "tv",
+        ArtworkKind::Music => return Err("TMDB artwork is only available for video.".to_owned()),
+    };
+    if id == 0 {
+        return Err("The TMDB candidate is invalid.".to_owned());
+    }
+    let url = Url::parse(&format!("{TMDB_API_BASE}/{endpoint}/{id}?language=en-US"))
+        .map_err(|_| "TMDB detail URL is invalid.".to_owned())?;
+    if !is_tmdb_api_url(&url) {
+        return Err("TMDB detail host is invalid.".to_owned());
+    }
+    Ok(url)
+}
+
+fn tmdb_configuration_url() -> Result<Url, String> {
+    let url = Url::parse(&format!("{TMDB_API_BASE}/configuration"))
+        .map_err(|_| "TMDB configuration URL is invalid.".to_owned())?;
+    if !is_tmdb_api_url(&url) {
+        return Err("TMDB configuration host is invalid.".to_owned());
+    }
+    Ok(url)
+}
+
+fn tmdb_genre_name_map(response: &Value) -> Result<HashMap<u64, String>, String> {
+    let genres = response
+        .get("genres")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "TMDB returned an invalid genre list.".to_owned())?;
+    Ok(genres
+        .iter()
+        .filter_map(|genre| {
+            let id = genre.get("id")?.as_u64().filter(|id| *id > 0)?;
+            let name = genre.get("name")?.as_str()?.trim();
+            (!name.is_empty() && name.len() <= MAX_QUERY_FIELD_BYTES).then(|| (id, name.to_owned()))
+        })
+        .collect())
+}
+
+fn parse_tmdb_candidates(
+    response: &Value,
+    genre_names: &HashMap<u64, String>,
+    kind: ArtworkKind,
+) -> Result<Vec<(TmdbCandidate, Option<String>)>, String> {
+    let (title_keys, date_key): (&[&str], &str) = match kind {
+        ArtworkKind::Movie => (&["title", "original_title"], "release_date"),
+        ArtworkKind::Series => (&["name", "original_name"], "first_air_date"),
+        ArtworkKind::Music => return Err("TMDB artwork is only available for video.".to_owned()),
+    };
+    let results = response
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "TMDB returned an invalid candidate list.".to_owned())?;
+    let mut seen = HashMap::new();
+    Ok(results
+        .iter()
+        .filter_map(|result| {
+            let id = result.get("id")?.as_u64().filter(|id| *id > 0)?;
+            if seen.insert(id, ()).is_some() {
+                return None;
+            }
+            let title = title_keys
+                .iter()
+                .find_map(|key| result.get(*key).and_then(Value::as_str))?
+                .trim();
+            if title.is_empty() || title.len() > MAX_QUERY_FIELD_BYTES {
+                return None;
+            }
+            let year = result
+                .get(date_key)
+                .and_then(Value::as_str)
+                .and_then(|date| date.get(..4))
+                .and_then(parse_release_year);
+            let genre = result
+                .get("genre_ids")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_u64)
+                .filter_map(|id| genre_names.get(&id))
+                .fold(Vec::<String>::new(), |mut names, name| {
+                    if !names.iter().any(|known| known.eq_ignore_ascii_case(name)) {
+                        names.push(name.clone());
+                    }
+                    names
+                })
+                .join("; ");
+            let poster_path = result
+                .get("poster_path")
+                .and_then(Value::as_str)
+                .filter(|path| safe_tmdb_image_path(path))
+                .map(str::to_owned);
+            Some((
+                TmdbCandidate {
+                    id,
+                    title: title.to_owned(),
+                    year,
+                    poster: None,
+                    genre,
+                },
+                poster_path,
+            ))
+        })
+        .take(MAX_TMDB_CANDIDATES)
+        .collect())
+}
+
+fn tmdb_detail_genres(details: &Value) -> String {
+    details
+        .get("genres")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|genre| {
+            let name = genre.get("name")?.as_str()?.trim();
+            (!name.is_empty() && name.len() <= MAX_QUERY_FIELD_BYTES).then_some(name)
+        })
+        .fold(Vec::<String>::new(), |mut names, name| {
+            if !names.iter().any(|known| known.eq_ignore_ascii_case(name)) {
+                names.push(name.to_owned());
+            }
+            names
+        })
+        .join("; ")
+}
+
+fn download_tmdb_previews(
+    client: &Client,
+    preview_urls: Vec<(usize, Url)>,
+    candidates: &mut [TmdbCandidate],
+    cache: &Path,
+    stopping: &AtomicBool,
+) -> Result<(), String> {
+    let responses = thread::scope(|scope| {
+        let handles = preview_urls
+            .into_iter()
+            .map(|(index, url)| {
+                let client = client.clone();
+                let handle = scope.spawn(move || {
+                    fetch_image_with_limit(
+                        &client,
+                        url,
+                        is_tmdb_image_url,
+                        stopping,
+                        MAX_TMDB_PREVIEW_BYTES,
+                    )
+                });
+                (index, handle)
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|(index, handle)| {
+                let result = handle
+                    .join()
+                    .unwrap_or_else(|_| Err("TMDB poster preview failed.".to_owned()));
+                (index, result)
+            })
+            .collect::<Vec<_>>()
+    });
+    for (index, result) in responses {
+        check_cancelled(stopping)?;
+        if let Ok(Some(bytes)) = result {
+            if let Ok(path) = cache_artwork(&bytes, cache) {
+                candidates[index].poster = Some(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn unique_tmdb_poster(
@@ -887,6 +1282,21 @@ fn exact_tmdb_candidates<'a>(
     )
 }
 
+fn unique_tmdb_id(
+    response: &Value,
+    title: &str,
+    year: Option<u16>,
+    kind: ArtworkKind,
+) -> Option<u64> {
+    let mut ids = exact_tmdb_candidates(response, title, year, kind)?
+        .into_iter()
+        .filter_map(|result| result.get("id")?.as_u64().filter(|id| *id > 0))
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    (ids.len() == 1).then(|| ids[0])
+}
+
 fn safe_tmdb_image_path(path: &str) -> bool {
     path.starts_with('/')
         && path.len() <= 512
@@ -900,6 +1310,14 @@ fn safe_tmdb_image_path(path: &str) -> bool {
 }
 
 fn tmdb_image_url(configuration: &Value, image_path: &str) -> Result<Url, String> {
+    tmdb_image_url_for_size(configuration, image_path, None)
+}
+
+fn tmdb_image_url_for_size(
+    configuration: &Value,
+    image_path: &str,
+    preferred_size: Option<&str>,
+) -> Result<Url, String> {
     if !safe_tmdb_image_path(image_path) {
         return Err("TMDB returned an invalid poster path.".to_owned());
     }
@@ -918,17 +1336,17 @@ fn tmdb_image_url(configuration: &Value, image_path: &str) -> Result<Url, String
         .get("poster_sizes")
         .and_then(Value::as_array)
         .ok_or_else(|| "TMDB poster sizes are missing.".to_owned())?;
-    let size = sizes
-        .iter()
-        .filter_map(Value::as_str)
-        .find(|size| *size == "w500")
-        .or_else(|| sizes.iter().filter_map(Value::as_str).next_back())
-        .filter(|size| {
-            *size == "original"
-                || size
-                    .strip_prefix('w')
-                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        })
+    let valid_size = |size: &&str| {
+        *size == "original"
+            || size
+                .strip_prefix('w')
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let configured = sizes.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+    let size = preferred_size
+        .filter(|preferred| configured.contains(preferred) && valid_size(preferred))
+        .or_else(|| configured.iter().copied().find(|size| *size == "w500"))
+        .or_else(|| configured.iter().copied().rev().find(valid_size))
         .ok_or_else(|| "TMDB has no supported poster size.".to_owned())?;
     let relative = format!("{size}/{}", image_path.trim_start_matches('/'));
     let url = base
@@ -1181,6 +1599,16 @@ fn fetch_image(
     allowed_host: fn(&Url) -> bool,
     stopping: &AtomicBool,
 ) -> Result<Option<Vec<u8>>, String> {
+    fetch_image_with_limit(client, url, allowed_host, stopping, MAX_ARTWORK_BYTES)
+}
+
+fn fetch_image_with_limit(
+    client: &Client,
+    url: Url,
+    allowed_host: fn(&Url) -> bool,
+    stopping: &AtomicBool,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, String> {
     check_cancelled(stopping)?;
     if !allowed_host(&url) {
         return Err("Artwork URL is outside the provider's approved host.".to_owned());
@@ -1199,12 +1627,19 @@ fn fetch_image(
             response.status().as_u16()
         ));
     }
-    let bytes = read_image_response(response)?;
+    let bytes = read_image_response_with_limit(response, max_bytes)?;
     Ok(Some(bytes))
 }
 
-fn read_image_response(mut response: Response) -> Result<Vec<u8>, String> {
-    let bytes = read_response_body(&mut response, MAX_ARTWORK_BYTES)?;
+fn read_image_response(response: Response) -> Result<Vec<u8>, String> {
+    read_image_response_with_limit(response, MAX_ARTWORK_BYTES)
+}
+
+fn read_image_response_with_limit(
+    mut response: Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let bytes = read_response_body(&mut response, max_bytes)?;
     validate_image(&bytes)?;
     Ok(bytes)
 }
@@ -1761,6 +2196,61 @@ fn store_lookup_cache(
     Ok(())
 }
 
+fn read_tmdb_genre_cache(cache: &Path, key: &str) -> Option<Option<String>> {
+    let _cache_guard = ARTWORK_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let marker = cache.join("tmdb-genres").join(format!("{key}.json"));
+    let bytes = match read_bounded_file(&marker, 4096) {
+        Ok(bytes) => bytes,
+        Err(_) => return None,
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        let _ = fs::remove_file(marker);
+        return None;
+    };
+    if let Some(genre) = value.get("genre").and_then(Value::as_str) {
+        let genre = genre.trim();
+        if !genre.is_empty() && genre.len() <= MAX_QUERY_FIELD_BYTES * 8 {
+            return Some(Some(genre.to_owned()));
+        }
+    } else if value.get("genre").is_some_and(Value::is_null) {
+        let expires_at = value.get("expires_at").and_then(Value::as_u64).unwrap_or(0);
+        if expires_at > now_unix_seconds() {
+            return Some(None);
+        }
+    }
+    let _ = fs::remove_file(marker);
+    None
+}
+
+fn store_tmdb_genre_cache(cache: &Path, key: &str, genre: Option<&str>) -> Result<(), String> {
+    let value = match genre {
+        Some(genre) => serde_json::json!({"genre": genre}),
+        None => serde_json::json!({
+            "genre": null,
+            "expires_at": now_unix_seconds().saturating_add(MISS_CACHE_TTL.as_secs())
+        }),
+    };
+    let bytes =
+        serde_json::to_vec(&value).map_err(|_| "Unable to save TMDB genre metadata.".to_owned())?;
+    let _cache_guard = ARTWORK_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    write_atomic(&cache.join("tmdb-genres"), &format!("{key}.json"), &bytes)?;
+    Ok(())
+}
+
+fn cache_tmdb_genre_result(
+    cache: &Path,
+    key: &str,
+    result: Result<Option<String>, String>,
+) -> Result<Option<String>, String> {
+    let genre = result?;
+    store_tmdb_genre_cache(cache, key, genre.as_deref())?;
+    Ok(genre)
+}
+
 fn now_unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1791,11 +2281,15 @@ fn is_youtube_image_url(url: &Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_artwork, filename_title, http_client, is_archive_image_url, is_uuid, lookup_artwork,
-        normalized_match, parse_artwork_title, read_local, secondary_tmdb_identity, send_tmdb_json,
-        split_trailing_bare_release_year, tmdb_image_url, tmdb_search_url,
-        unique_musicbrainz_release, unique_tmdb_poster, validate_image, youtube_artwork,
-        youtube_video_id, ArtworkKind, ArtworkRequest, LocalMetadata, MAX_ARTWORK_BYTES,
+        cache_artwork, cache_tmdb_genre_result, filename_title, http_client, is_archive_image_url,
+        is_tmdb_api_url, is_tmdb_image_url, is_uuid, json_response, lookup_artwork,
+        normalized_match, parse_artwork_title, parse_tmdb_candidates, read_local,
+        read_tmdb_genre_cache, request_cache_key, secondary_tmdb_identity, send_tmdb_json,
+        split_trailing_bare_release_year, store_tmdb_genre_cache, tmdb_detail_genres,
+        tmdb_detail_url, tmdb_genre_name_map, tmdb_genres_url, tmdb_image_url,
+        tmdb_image_url_for_size, tmdb_search_url, unique_musicbrainz_release, unique_tmdb_id,
+        unique_tmdb_poster, validate_image, youtube_artwork, youtube_video_id, ArtworkKind,
+        ArtworkRequest, LocalMetadata, MAX_ARTWORK_BYTES,
     };
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use reqwest::StatusCode;
@@ -1884,6 +2378,24 @@ mod tests {
             stream.write_all(response).expect("write redirect fixture");
         });
         (format!("http://{address}/start"), server)
+    }
+
+    fn local_json_server(body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local JSON fixture");
+        let address = listener.local_addr().expect("read fixture address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept local JSON request");
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .expect("write local JSON headers");
+            stream.write_all(&body).expect("write local JSON body");
+        });
+        (format!("http://{address}/fixture"), server)
     }
 
     fn local_archive_redirect_server(image: Vec<u8>) -> (Url, thread::JoinHandle<Vec<String>>) {
@@ -2503,6 +3015,318 @@ mod tests {
             ]
         );
         assert!(tmdb_search_url(ArtworkKind::Music, "Album", None).is_err());
+    }
+
+    #[test]
+    fn automatic_tmdb_matching_rejects_incomplete_and_malformed_searches() {
+        let exact_match = serde_json::json!({
+            "id": 603,
+            "title": "The Matrix",
+            "release_date": "1999-03-31"
+        });
+        let complete = serde_json::json!({
+            "page": 1,
+            "total_pages": 1,
+            "total_results": 1,
+            "results": [exact_match]
+        });
+        assert!(super::validate_tmdb_search_response(&complete).is_ok());
+        assert_eq!(
+            unique_tmdb_id(&complete, "The Matrix", Some(1999), ArtworkKind::Movie),
+            Some(603)
+        );
+
+        let empty = serde_json::json!({
+            "page": 1,
+            "total_pages": 0,
+            "total_results": 0,
+            "results": []
+        });
+        assert!(super::validate_tmdb_search_response(&empty).is_ok());
+
+        let paginated = serde_json::json!({
+            "page": 1,
+            "total_pages": 2,
+            "total_results": 21,
+            "results": [{
+                "id": 603,
+                "title": "The Matrix",
+                "release_date": "1999-03-31"
+            }]
+        });
+        assert_eq!(
+            unique_tmdb_id(&paginated, "The Matrix", Some(1999), ArtworkKind::Movie),
+            Some(603)
+        );
+        assert!(super::validate_tmdb_search_response(&paginated).is_err());
+
+        for malformed in [
+            serde_json::json!({}),
+            serde_json::json!({"page": 1, "total_pages": 1, "results": null}),
+            serde_json::json!({"page": 2, "total_pages": 2, "results": []}),
+        ] {
+            assert!(super::validate_tmdb_search_response(&malformed).is_err());
+        }
+    }
+
+    #[test]
+    fn tmdb_candidate_json_maps_movie_and_tv_genres_and_caps_results() {
+        let genres = tmdb_genre_name_map(&serde_json::json!({
+            "genres": [
+                {"id": 28, "name": "Action"},
+                {"id": 878, "name": "Science Fiction"}
+            ]
+        }))
+        .unwrap();
+        let movies = serde_json::json!({
+            "results": [
+                {"id": 603, "title": "The Matrix", "release_date": "1999-03-31", "poster_path": "/matrix.jpg", "genre_ids": [28, 878]},
+                {"id": 603, "title": "Duplicate", "release_date": "2000-01-01", "poster_path": "/duplicate.jpg", "genre_ids": []},
+                {"id": 604, "title": "No poster", "release_date": "", "poster_path": "https://evil.example/poster.jpg", "genre_ids": [999]},
+                {"id": 0, "title": "Invalid id", "poster_path": "/invalid.jpg", "genre_ids": []}
+            ]
+        });
+        let parsed = parse_tmdb_candidates(&movies, &genres, ArtworkKind::Movie).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0.id, 603);
+        assert_eq!(parsed[0].0.title, "The Matrix");
+        assert_eq!(parsed[0].0.year, Some(1999));
+        assert_eq!(parsed[0].0.genre, "Action; Science Fiction");
+        assert_eq!(parsed[0].1.as_deref(), Some("/matrix.jpg"));
+        assert_eq!(parsed[1].0.year, None);
+        assert!(parsed[1].1.is_none());
+
+        let tv = serde_json::json!({
+            "results": [
+                {"id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20", "genre_ids": [18]}
+            ]
+        });
+        let tv_genres = tmdb_genre_name_map(&serde_json::json!({
+            "genres": [{"id": 18, "name": "Drama"}]
+        }))
+        .unwrap();
+        let series = parse_tmdb_candidates(&tv, &tv_genres, ArtworkKind::Series).unwrap();
+        assert_eq!(series[0].0.title, "Breaking Bad");
+        assert_eq!(series[0].0.year, Some(2008));
+        assert_eq!(series[0].0.genre, "Drama");
+        assert!(parse_tmdb_candidates(&tv, &genres, ArtworkKind::Music).is_err());
+
+        let many = serde_json::json!({
+            "results": (1..=20).map(|id| serde_json::json!({"id": id, "title": format!("Movie {id}")})).collect::<Vec<_>>()
+        });
+        assert_eq!(
+            parse_tmdb_candidates(&many, &genres, ArtworkKind::Movie)
+                .unwrap()
+                .len(),
+            super::MAX_TMDB_CANDIDATES
+        );
+    }
+
+    #[test]
+    fn tmdb_candidates_parse_local_fake_json_without_credentials() {
+        let body = serde_json::json!({
+            "results": [
+                {"id": 11, "title": "Local Fixture", "release_date": "2024-02-01", "genre_ids": [35], "poster_path": "/fixture.jpg"}
+            ]
+        })
+        .to_string()
+        .into_bytes();
+        let (url, server) = local_json_server(body);
+        let response = http_client().unwrap().get(url).send().unwrap();
+        let fixture = json_response(response, "TMDB").unwrap();
+        server.join().expect("finish local JSON fixture");
+        let genres = tmdb_genre_name_map(&serde_json::json!({
+            "genres": [{"id": 35, "name": "Comedy"}]
+        }))
+        .unwrap();
+        let candidates = parse_tmdb_candidates(&fixture, &genres, ArtworkKind::Movie).unwrap();
+        assert_eq!(candidates[0].0.id, 11);
+        assert_eq!(candidates[0].0.genre, "Comedy");
+    }
+
+    #[test]
+    fn tmdb_candidate_urls_are_type_specific_and_host_bound() {
+        assert_eq!(
+            tmdb_genres_url(ArtworkKind::Movie).unwrap().path(),
+            "/3/genre/movie/list"
+        );
+        assert_eq!(
+            tmdb_genres_url(ArtworkKind::Series).unwrap().path(),
+            "/3/genre/tv/list"
+        );
+        assert_eq!(
+            tmdb_detail_url(ArtworkKind::Movie, 603).unwrap().path(),
+            "/3/movie/603"
+        );
+        assert_eq!(
+            tmdb_detail_url(ArtworkKind::Series, 1396).unwrap().path(),
+            "/3/tv/1396"
+        );
+        assert!(tmdb_detail_url(ArtworkKind::Movie, 0).is_err());
+        assert!(tmdb_detail_url(ArtworkKind::Music, 603).is_err());
+        assert_eq!(
+            tmdb_detail_genres(&serde_json::json!({
+                "genres": [{"id": 28, "name": "Action"}, {"id": 28, "name": "Action"}, {"id": 878, "name": "Science Fiction"}]
+            })),
+            "Action; Science Fiction"
+        );
+
+        for value in [
+            "https://api.themoviedb.org:444/3/movie/1",
+            "https://user:secret@api.themoviedb.org/3/movie/1",
+            "http://api.themoviedb.org/3/movie/1",
+            "https://api.themoviedb.org.example.com/3/movie/1",
+        ] {
+            assert!(!is_tmdb_api_url(&Url::parse(value).unwrap()));
+        }
+        for value in [
+            "https://image.tmdb.org:444/t/p/w185/poster.jpg",
+            "https://user:secret@image.tmdb.org/t/p/w185/poster.jpg",
+            "http://image.tmdb.org/t/p/w185/poster.jpg",
+            "https://image.tmdb.org.example.com/t/p/w185/poster.jpg",
+        ] {
+            assert!(!is_tmdb_image_url(&Url::parse(value).unwrap()));
+        }
+
+        let config = serde_json::json!({
+            "images": {
+                "secure_base_url":"https://image.tmdb.org/t/p/",
+                "poster_sizes":["w185", "w500", "original"]
+            }
+        });
+        assert_eq!(
+            tmdb_image_url_for_size(&config, "/poster.jpg", Some("w185"))
+                .unwrap()
+                .as_str(),
+            "https://image.tmdb.org/t/p/w185/poster.jpg"
+        );
+        let unsafe_config = serde_json::json!({
+            "images": {
+                "secure_base_url":"https://image.tmdb.org:444/t/p/",
+                "poster_sizes":["w185", "w500"]
+            }
+        });
+        assert!(tmdb_image_url_for_size(&unsafe_config, "/poster.jpg", Some("w185")).is_err());
+    }
+
+    #[test]
+    fn automatic_tmdb_genres_require_one_exact_title_and_matching_year() {
+        let remakes = serde_json::json!({
+            "results": [
+                {"id": 1, "title": "The Thing", "release_date": "1982-06-25"},
+                {"id": 2, "title": "The Thing", "release_date": "2011-09-14"},
+                {"id": 3, "title": "The Thing Returns", "release_date": "2020-01-01"}
+            ]
+        });
+        assert_eq!(
+            unique_tmdb_id(&remakes, "The Thing", Some(1982), ArtworkKind::Movie),
+            Some(1)
+        );
+        assert_eq!(
+            unique_tmdb_id(&remakes, "The Thing", None, ArtworkKind::Movie),
+            None
+        );
+        assert_eq!(
+            unique_tmdb_id(&remakes, "The Thing", Some(1990), ArtworkKind::Movie),
+            None
+        );
+
+        let duplicate_id = serde_json::json!({
+            "results": [
+                {"id": 8, "title": "Dune", "release_date": "2021-10-22"},
+                {"id": 8, "title": "Dune", "release_date": "2021-10-22"}
+            ]
+        });
+        assert_eq!(
+            unique_tmdb_id(&duplicate_id, "Dune", Some(2021), ArtworkKind::Movie),
+            Some(8)
+        );
+        assert_eq!(
+            unique_tmdb_id(&duplicate_id, "Dune", Some(2021), ArtworkKind::Series),
+            None
+        );
+
+        let tv = serde_json::json!({
+            "results": [
+                {"id": 13, "name": "The Office", "first_air_date": "2005-03-24"},
+                {"id": 14, "name": "The Office", "first_air_date": "2001-03-09"}
+            ]
+        });
+        assert_eq!(
+            unique_tmdb_id(&tv, "The Office", Some(2005), ArtworkKind::Series),
+            Some(13)
+        );
+        assert_eq!(
+            unique_tmdb_id(&tv, "The Office", Some(2005), ArtworkKind::Movie),
+            None
+        );
+    }
+
+    #[test]
+    fn genre_cache_skips_missing_credentials_and_never_caches_errors() {
+        let root = temporary_directory();
+        let request = ArtworkRequest {
+            title: "The Matrix (1999)".into(),
+            artist: None,
+            album: None,
+            kind: ArtworkKind::Movie,
+        };
+        let key = request_cache_key("tmdb-genres", &request);
+        assert_eq!(
+            super::lookup_tmdb_genres_with_cancel(&request, &root, None, &AtomicBool::new(false))
+                .unwrap(),
+            None
+        );
+        assert!(read_tmdb_genre_cache(&root, &key).is_none());
+
+        let invalid_token_result = super::lookup_tmdb_genres_with_cancel(
+            &request,
+            &root,
+            Some("bad\r\ntoken"),
+            &AtomicBool::new(false),
+        );
+        assert!(invalid_token_result.is_err());
+        assert!(read_tmdb_genre_cache(&root, &key).is_none());
+
+        assert_eq!(
+            cache_tmdb_genre_result(&root, &key, Err("network failed".into())).unwrap_err(),
+            "network failed"
+        );
+        assert!(read_tmdb_genre_cache(&root, &key).is_none());
+
+        for response in [
+            serde_json::json!({}),
+            serde_json::json!({
+                "page": 1,
+                "total_pages": 2,
+                "total_results": 21,
+                "results": []
+            }),
+        ] {
+            let invalid_search = super::validate_tmdb_search_response(&response).map(|()| None);
+            assert!(cache_tmdb_genre_result(&root, &key, invalid_search).is_err());
+            assert!(read_tmdb_genre_cache(&root, &key).is_none());
+        }
+
+        cache_tmdb_genre_result(&root, &key, Ok(Some("Action; Science Fiction".into()))).unwrap();
+        assert_eq!(
+            read_tmdb_genre_cache(&root, &key),
+            Some(Some("Action; Science Fiction".into()))
+        );
+        store_tmdb_genre_cache(&root, &key, None).unwrap();
+        assert_eq!(read_tmdb_genre_cache(&root, &key), Some(None));
+
+        fs::write(
+            root.join("tmdb-genres").join(format!("{key}.json")),
+            br#"{"genre":null,"expires_at":0}"#,
+        )
+        .unwrap();
+        assert!(read_tmdb_genre_cache(&root, &key).is_none());
+        assert!(!root
+            .join("tmdb-genres")
+            .join(format!("{key}.json"))
+            .exists());
+        fs::remove_dir_all(root).expect("remove isolated genre cache fixture");
     }
 
     #[test]

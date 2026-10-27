@@ -1,5 +1,11 @@
 # Validation and release gates
 
+## 0.1.3 verification (2026-10-27)
+
+The final source passed `cargo test --all-targets --locked` (202 passed, eight ignored), `cargo clippy --all-targets --locked -- -D warnings`, formatting and diff checks. `cargo audit --file Cargo.lock` reported no vulnerabilities and 11 allowed unmaintained-dependency warnings. Independent GPT-6.1 Sol xhigh source review checked the lock, installation scripts, TMDB handling, relinking and playback transitions; identified issues were repaired and re-reviewed. The release workflow includes clean install, 0.1.2 upgrade and database retention checks on disposable runners. Native graphical playback and provider behavior require separate verification; these are not established by the automated tests.
+
+All eight ignored runtime checks passed serially on Windows with libVLC 3.0.24, including video-frame decoding and the live Cover Art Archive check. A parallel run timed out in three playback cases; those cases passed in the serial run. These checks do not replace hands-on UI or installed-platform testing.
+
 ## 0.1.2 release (2026-10-27)
 
 Version 0.1.2 is published at the [GitHub release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.2). It combines the review fixes with queue/root persistence and the approved P01/P02/P04 features; parental/PIN locking and paired LAN remote control were explicitly excluded. Implementation used GPT-6 Luna Max workers. Independent GPT-6.1 Sol xhigh review of the frozen repaired source found no remaining actionable findings in scope. This is source-level review, not installed native-platform acceptance.

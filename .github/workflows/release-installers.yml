@@ -254,9 +254,71 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  install-validation:
+    name: Install and upgrade ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: [build]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Arch Linux
+            artifact_os: linux
+            arch: x86_64
+            runner: ubuntu-22.04
+          - platform: Windows
+            artifact_os: windows
+            arch: x86_64
+            runner: windows-2025
+          - platform: macOS
+            artifact_os: macos
+            arch: arm64
+            runner: macos-15
+          - platform: macOS
+            artifact_os: macos
+            arch: x86_64
+            runner: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: rust-vlc-${{ matrix.artifact_os }}-${{ matrix.arch }}-installer
+          path: dist
+
+      - uses: actions/setup-python@v6
+        if: matrix.platform != 'Arch Linux'
+        with:
+          python-version: '3.x'
+
+      - name: Validate Windows clean install, upgrade, and uninstall retention
+        if: matrix.platform == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: ./packaging/validate-install-windows.ps1
+
+      - name: Validate macOS clean install, upgrade, and data retention
+        if: matrix.platform == 'macOS'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: bash packaging/validate-install-macos.sh
+
+      - name: Validate Arch clean install, upgrade, and uninstall retention
+        if: matrix.platform == 'Arch Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: bash packaging/validate-install-arch.sh
+
   publish:
     name: Publish GitHub release
-    needs: [build, audit]
+    needs: [build, audit, install-validation]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

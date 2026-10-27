@@ -12,6 +12,9 @@ pub enum LibraryJob {
     Scan(PathBuf),
     ReadMetadata(Vec<(i32, PathBuf)>),
     Artwork(i32, u64, ArtworkRequest),
+    SearchTmdbCandidates(i32, u64, ArtworkRequest),
+    SelectTmdbCandidate(i32, u64, metadata::ArtworkKind, u64),
+    LookupTmdbGenres(i32, u64, ArtworkRequest),
     SearchSubtitles {
         request_id: u64,
         query: String,
@@ -26,8 +29,11 @@ pub enum LibraryJob {
 
 pub enum LibraryEvent {
     Scanned(PathBuf, ScanOutcome),
-    Metadata(i32, Result<LocalMetadata, String>),
+    Metadata(i32, PathBuf, Result<LocalMetadata, String>),
     Artwork(i32, u64, Result<Option<PathBuf>, String>),
+    TmdbCandidates(i32, u64, Result<Vec<metadata::TmdbCandidate>, String>),
+    TmdbCandidateSelected(i32, u64, Result<metadata::TmdbArtwork, String>),
+    TmdbGenres(i32, u64, Result<Option<String>, String>),
     AutomaticArtwork(i32, ArtworkRequest, Result<Option<PathBuf>, String>),
     SubtitlesFound(
         u64,
@@ -39,6 +45,9 @@ pub enum LibraryEvent {
 enum ArtworkJob {
     Manual(i32, u64, ArtworkRequest),
     Automatic(i32, ArtworkRequest),
+    SearchTmdbCandidates(i32, u64, ArtworkRequest),
+    SelectTmdbCandidate(i32, u64, metadata::ArtworkKind, u64),
+    LookupTmdbGenres(i32, u64, ArtworkRequest),
     SearchSubtitles {
         request_id: u64,
         query: String,
@@ -124,6 +133,40 @@ impl LibraryWorker {
                             );
                             LibraryEvent::AutomaticArtwork(id, request, result)
                         }
+                        ArtworkJob::SearchTmdbCandidates(id, generation, request) => {
+                            let result = crate::credentials::tmdb_token().and_then(|token| {
+                                metadata::search_tmdb_candidates_with_cancel(
+                                    &request,
+                                    &automatic_cache,
+                                    token.as_deref(),
+                                    &automatic_stopping,
+                                )
+                            });
+                            LibraryEvent::TmdbCandidates(id, generation, result)
+                        }
+                        ArtworkJob::SelectTmdbCandidate(id, generation, kind, tmdb_id) => {
+                            let result = crate::credentials::tmdb_token().and_then(|token| {
+                                metadata::download_tmdb_candidate_with_cancel(
+                                    kind,
+                                    tmdb_id,
+                                    &automatic_cache,
+                                    token.as_deref(),
+                                    &automatic_stopping,
+                                )
+                            });
+                            LibraryEvent::TmdbCandidateSelected(id, generation, result)
+                        }
+                        ArtworkJob::LookupTmdbGenres(id, generation, request) => {
+                            let result = crate::credentials::tmdb_token().and_then(|token| {
+                                metadata::lookup_tmdb_genres_with_cancel(
+                                    &request,
+                                    &automatic_cache,
+                                    token.as_deref(),
+                                    &automatic_stopping,
+                                )
+                            });
+                            LibraryEvent::TmdbGenres(id, generation, result)
+                        }
                         ArtworkJob::SearchSubtitles {
                             request_id,
                             query,
@@ -175,7 +218,10 @@ impl LibraryWorker {
                                     break;
                                 }
                                 let result = metadata::read_local(&path, &cache);
-                                if events.send(LibraryEvent::Metadata(id, result)).is_err() {
+                                if events
+                                    .send(LibraryEvent::Metadata(id, path, result))
+                                    .is_err()
+                                {
                                     return;
                                 }
                             }
@@ -184,6 +230,11 @@ impl LibraryWorker {
                         LibraryJob::Shutdown => break,
                         LibraryJob::Artwork(_, _, _) => {
                             unreachable!("artwork is routed separately")
+                        }
+                        LibraryJob::SearchTmdbCandidates(_, _, _)
+                        | LibraryJob::SelectTmdbCandidate(_, _, _, _)
+                        | LibraryJob::LookupTmdbGenres(_, _, _) => {
+                            unreachable!("TMDB candidate jobs are routed separately")
                         }
                         LibraryJob::SearchSubtitles { .. }
                         | LibraryJob::DownloadSubtitle { .. } => {
@@ -223,6 +274,20 @@ impl LibraryWorker {
             LibraryJob::Artwork(id, generation, request) => self
                 .artwork_sender
                 .try_send(ArtworkJob::Manual(id, generation, request))
+                .map_err(submission_error),
+            LibraryJob::SearchTmdbCandidates(id, generation, request) => self
+                .artwork_sender
+                .try_send(ArtworkJob::SearchTmdbCandidates(id, generation, request))
+                .map_err(submission_error),
+            LibraryJob::SelectTmdbCandidate(id, generation, kind, tmdb_id) => self
+                .artwork_sender
+                .try_send(ArtworkJob::SelectTmdbCandidate(
+                    id, generation, kind, tmdb_id,
+                ))
+                .map_err(submission_error),
+            LibraryJob::LookupTmdbGenres(id, generation, request) => self
+                .artwork_sender
+                .try_send(ArtworkJob::LookupTmdbGenres(id, generation, request))
                 .map_err(submission_error),
             LibraryJob::SearchSubtitles {
                 request_id,

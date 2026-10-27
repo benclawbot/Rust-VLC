@@ -11,6 +11,7 @@ export struct TrackRow {
     duration: string,
     selected: bool,
     unavailable: bool,
+    local-media: bool,
     artwork: image,
     has-artwork: bool,
     monogram: string,
@@ -48,6 +49,15 @@ export struct WatchedRootRow {
     index: int,
     path: string,
     status: string,
+}
+
+export struct TmdbCandidateRow {
+    id: string,
+    title: string,
+    year: string,
+    genre: string,
+    artwork: image,
+    has-artwork: bool,
 }
 
 export struct EqualizerBandRow {
@@ -957,7 +967,12 @@ export component AppWindow inherits Window {
     in property <string> selected-movie-format: "—";
     in property <string> selected-movie-duration: "—";
     in property <bool> selected-movie-saved: false;
+    in property <bool> selected-movie-local: false;
     in property <bool> movie-details-open: false;
+    in property <bool> tmdb-picker-open: false;
+    in property <string> tmdb-picker-status: "";
+    in property <[TmdbCandidateRow]> tmdb-candidates: [];
+    in property <bool> tmdb-picker-busy: false;
     in-out property <string> music-genre: "All genres";
     in-out property <string> music-sort: "Recently added";
     in property <string> music-results-heading: "Albums";
@@ -965,6 +980,7 @@ export component AppWindow inherits Window {
     in property <string> artwork-target-title: "";
     in property <bool> artwork-target-ready: false;
     in property <bool> artwork-target-missing: false;
+    in property <bool> artwork-target-video: false;
     in property <string> artwork-query: "";
     in-out property <string> tmdb-token-input: "";
     in property <bool> tmdb-token-available: false;
@@ -1038,6 +1054,9 @@ export component AppWindow inherits Window {
     callback clear-music-filters();
     callback movie-poster-clicked(int);
     callback select-movie(int);
+    callback relink-media(int);
+    callback close-tmdb-picker();
+    callback select-tmdb-candidate(string);
     callback play-movie(int, bool);
     callback exit-movie-fullscreen();
     callback return-to-video();
@@ -1113,7 +1132,11 @@ export component AppWindow inherits Window {
             if root.movie-fullscreen {
                 root.fullscreen-activity();
             }
-            if (root.settings-open && event.text == Key.Escape) {
+            if (root.tmdb-picker-open && event.text == Key.Escape) {
+                root.close-tmdb-picker();
+                movie-keyboard-scope.focus();
+                accept
+            } else if (root.settings-open && event.text == Key.Escape) {
                 root.settings-open = false;
                 root.tmdb-token-input = "";
                 root.settings-closed();
@@ -1135,7 +1158,7 @@ export component AppWindow inherits Window {
             }
         }
         key-pressed(event) => {
-            if root.settings-open || root.about-open || root.movie-details-open || !root.has-current-track {
+            if root.settings-open || root.about-open || root.movie-details-open || root.tmdb-picker-open || !root.has-current-track {
                 reject
             } else if root.playing-video && root.has-video-frame && event.text == Key.P {
                 root.open-picture-in-picture();
@@ -1641,6 +1664,11 @@ export component AppWindow inherits Window {
                                     enabled: root.runtime-available;
                                     clicked => root.play-next-track(track.id, track.index);
                                 }
+                                if track.local-media: ArchiveButton {
+                                    text: "Locate file";
+                                    accessible-label: "Choose a replacement file for " + track.title;
+                                    clicked => root.relink-media(track.id);
+                                }
                                 if root.music-section == "playlists" && root.music-detail-open: HorizontalLayout {
                                     spacing: 3px;
                                     ArchiveButton {
@@ -1836,6 +1864,7 @@ export component AppWindow inherits Window {
                                 }
                                 if movie.can-resume: ArchiveButton { text: "Resume"; clicked => root.play-movie(movie.id, true); }
                                 ArchiveButton { text: "Start over"; primary: true; clicked => root.play-movie(movie.id, false); }
+                                if movie.local-media: ArchiveButton { text: "Locate file"; accessible-label: "Choose a replacement file for " + movie.title; clicked => root.relink-media(movie.id); }
                             }
                         }
                     }
@@ -1865,7 +1894,7 @@ export component AppWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                         if root.artwork-target-ready: Text { text: "Artwork: " + root.artwork-target-title; color: #ffffffB3; font-size: 10px; overflow: elide; }
                         if root.artwork-target-ready: ArchiveButton { text: "Retry local art"; enabled: root.artwork-target-missing; clicked => root.retry-local-artwork(); }
-                        if root.artwork-target-ready: ArchiveButton { text: "Find artwork online"; primary: true; clicked => root.find-online-artwork(); }
+                        if root.artwork-target-ready: ArchiveButton { text: root.artwork-target-video ? "Choose poster" : "Find artwork online"; primary: true; clicked => root.find-online-artwork(); }
                     }
 
                     if root.status-message != "": Text { height: 18px; text: root.status-message; color: #ffffff; font-size: 11px; wrap: word-wrap; overflow: elide; }
@@ -2385,14 +2414,14 @@ export component AppWindow inherits Window {
                     ArchiveButton { text: "Close"; clicked => { root.about-open = false; } }
                 }
                 Text { text: "Version " + root.app-version; color: #f46b32; font-size: 12px; font-weight: 650; }
-                Text { text: "A local-first desktop media library. Media paths, tags, artwork and playback history stay on this device unless you request an online artwork lookup."; color: #ffffff; font-size: 11px; wrap: word-wrap; }
-                Text { text: "Movie artwork lookup runs only when you choose Find artwork online. Music tags and art are read locally first. If local art is missing, automatic online artwork lookup sends the track title and artist to YouTube; its MusicBrainz/Cover Art Archive fallback may also send the album tag. Native media paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                Text { text: "A local-first desktop media library. Native media paths and playback history stay on this device."; color: #ffffff; font-size: 11px; wrap: word-wrap; }
+                Text { text: "With a TMDB token saved, missing genres for local movies and TV are looked up automatically using title and year when available. Poster searches require your choice. Music tags and art are read locally; if art is missing, online lookup sends the track title and artist to YouTube, then the fallback may send the album tag to MusicBrainz and download artwork from Cover Art Archive. Native media paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
                 Image { width: 85px; height: 62px; source: @image-url("../assets/attribution/tmdb-logo.png"); image-fit: contain; accessible-label: "TMDB logo"; }
                 Text { text: "This product uses the TMDB API but is not endorsed or certified by TMDB."; color: #ffffff; font-size: 10px; wrap: word-wrap; }
                 Text { text: "Windows and macOS releases bundle VLC 3.0.24 and its plugins. Arch installs system libVLC 3 and the full VLC plugin set as package dependencies. Inter is included under the SIL Open Font License 1.1; see the bundled OFL.txt."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
                 Text { text: root.media-controls-status; color: #ffffff78; font-size: 9px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
-                Text { text: "When local music artwork is missing, online artwork lookup runs automatically. Movie artwork lookup remains manual."; color: #f46b32; font-size: 10px; font-weight: 650; }
+                Text { text: "Music artwork lookup runs automatically when local art is missing. Poster selection is manual; missing movie and TV genres are looked up automatically when a TMDB token is saved."; color: #f46b32; font-size: 10px; font-weight: 650; }
             }
         }
 
@@ -2470,8 +2499,8 @@ export component AppWindow inherits Window {
                             Rectangle { horizontal-stretch: 1; }
                         }
                         Rectangle { height: 1px; background: #3b3631; }
-                        Text { text: "Movie artwork lookup"; color: #f46b32; font-size: 12px; font-weight: 700; }
-                        Text { text: root.tmdb-token-available ? "A TMDB token is available. Add or replace the saved token below, or remove the stored token." : "Add a TMDB read token to enable manual movie artwork lookup."; color: #ffffffB3; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "TMDB movie and TV lookup"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                        Text { text: root.tmdb-token-available ? "A TMDB token is available for automatic missing-genre lookup and manual poster search. Add or replace the saved token below, or remove the stored token." : "Add a TMDB read token to enable automatic lookup for missing local movie and TV genres, plus manual poster search."; color: #ffffffB3; font-size: 11px; wrap: word-wrap; }
                         tmdb-token-editor := ArchiveLineEdit {
                             horizontal-stretch: 1;
                             text <=> root.tmdb-token-input;
@@ -2588,8 +2617,92 @@ export component AppWindow inherits Window {
                                     spacing: 8px;
                                     if root.selected-movie-can-resume: ArchiveButton { text: "Resume"; primary: true; clicked => root.play-movie(root.selected-movie-id, true); }
                                     ArchiveButton { text: root.selected-movie-can-resume ? "Start over" : "Play"; primary: !root.selected-movie-can-resume; clicked => root.play-movie(root.selected-movie-id, false); }
+                                    ArchiveButton { text: "Choose poster"; enabled: root.tmdb-token-available; clicked => root.find-online-artwork(); }
+                                    if root.selected-movie-local: ArchiveButton { text: "Relink file"; accessible-label: "Choose a replacement file for this movie"; clicked => root.relink-media(root.selected-movie-id); }
                                     Rectangle { horizontal-stretch: 1; }
                                     ArchiveButton { text: root.selected-movie-saved ? "Remove from My List" : "Add to My List"; style: "chip"; primary: root.selected-movie-saved; clicked => root.toggle-saved-movie(root.selected-movie-id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.tmdb-picker-open: Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            background: #000000C9;
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                accessible-role: none;
+                clicked => root.close-tmdb-picker();
+            }
+            tmdb-picker-scope := FocusScope {
+                init => self.focus();
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(720px, parent.width - 40px);
+                height: min(650px, parent.height - 40px);
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: #211e1b;
+                    border-color: #5a392a;
+                    border-width: 1px;
+                    border-radius: 10px;
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            Text { text: "CHOOSE A TMDB POSTER"; color: #f46b32; font-size: 11px; font-weight: 700; letter-spacing: 1px; horizontal-stretch: 1; vertical-alignment: center; }
+                            ArchiveButton { text: "Close"; clicked => root.close-tmdb-picker(); }
+                        }
+                        if root.tmdb-picker-status != "": Text {
+                            height: 22px;
+                            text: root.tmdb-picker-status;
+                            color: #ffffffB3;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                            accessible-label: "TMDB artwork search status: " + root.tmdb-picker-status;
+                        }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            accessible-role: list;
+                            VerticalLayout {
+                                spacing: 8px;
+                                for candidate in root.tmdb-candidates: Rectangle {
+                                    height: 112px;
+                                    background: #302820;
+                                    border-radius: 5px;
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        spacing: 12px;
+                                        Rectangle {
+                                            width: 64px;
+                                            height: 96px;
+                                            background: #211e1b;
+                                            if candidate.has-artwork: Image { width: parent.width; height: parent.height; source: candidate.artwork; image-fit: cover; accessible-label: candidate.title + " poster preview"; }
+                                            if !candidate.has-artwork: Text { text: "No poster"; color: #ffffffB3; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 5px;
+                                            Text { text: candidate.title + (candidate.year == "" ? "" : " (" + candidate.year + ")"); color: #ffffff; font-size: 14px; font-weight: 650; wrap: word-wrap; }
+                                            Text { text: candidate.genre == "" ? "Genre unavailable" : candidate.genre; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                                            Rectangle { vertical-stretch: 1; }
+                                            ArchiveButton {
+                                                text: "Use this poster";
+                                                primary: true;
+                                                enabled: candidate.has-artwork && !root.tmdb-picker-busy;
+                                                accessible-label: "Use the poster for " + candidate.title;
+                                                clicked => root.select-tmdb-candidate(candidate.id);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
