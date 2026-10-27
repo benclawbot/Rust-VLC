@@ -1,6 +1,6 @@
 # Implementation plan
 
-Current work, 2026-10-26: source version 0.1.2 is implementing queue/root persistence and the P01/P02/P04 desktop feature scope, plus the release-review fixes. P03 parental/PIN locking and paired LAN remote control were explicitly excluded by the user. The baseline gates below remain open until the new integrated review and validation evidence is recorded; implemented code must not be mistaken for tested installers or complete native platform acceptance.
+Current release, 2026-10-27: version 0.1.2 implements queue/root persistence and the approved P01/P02/P04 desktop feature scope, plus the release-review fixes. P03 parental/PIN locking and paired LAN remote control were explicitly excluded by the user. CI built the four installers; installed native-platform and device qualification remain open as recorded in validation.
 
 Planning baseline: 2026-10-20. The approved targets are Arch Linux, macOS, and Windows. The application is local-first; online artwork is optional. The first release includes video/series, music, ordered playlists, history, and packaging. Android-only services are replaced with desktop equivalents.
 

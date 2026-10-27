@@ -2,15 +2,15 @@
 
 A local movie and music player built with Rust, Slint and libVLC 3, inspired by [VLC Première](https://github.com/benclawbot/VLC-Premiere). Movies and Music share one player, so browsing another collection keeps playback running.
 
-The current source is version **0.1.2**. Its refreshed installers are pending release validation; the latest published installers are still 0.1.1. See the [0.1.2 changes and distribution status](docs/RELEASE_0.1.2.md).
+The current release is **0.1.2**. See the [release notes](docs/RELEASE_0.1.2.md) for the latest changes.
 
 ## Get the application
 
-Download an installer from the [Rust-VLC v0.1.1 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.1). Each installer has a matching `.sha256` checksum beside it.
+Download an installer from the [Rust-VLC v0.1.2 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.2). Each installer has a matching `.sha256` checksum beside it.
 
 | Platform | Installer | Install |
 | --- | --- | --- |
-| Arch Linux x86_64 | `rust-vlc-0.1.1-1-x86_64.pkg.tar.zst` | Run `sudo pacman -U rust-vlc-0.1.1-1-x86_64.pkg.tar.zst`; pacman installs libVLC 3 and the full plugin set as dependencies |
+| Arch Linux x86_64 | `rust-vlc-0.1.2-1-x86_64.pkg.tar.zst` | Run `sudo pacman -U rust-vlc-0.1.2-1-x86_64.pkg.tar.zst`; pacman installs libVLC 3 and the full plugin set as dependencies |
 | Windows x86_64 | `rust-vlc-windows-x86_64-setup.exe` | Run Setup; it includes VLC 3 and creates a desktop shortcut by default |
 | macOS Apple Silicon | `rust-vlc-macos-arm64.pkg` | Open the package; it installs Rust-VLC and its VLC runtime in Applications |
 | macOS Intel | `rust-vlc-macos-x86_64.pkg` | Open the package; it installs Rust-VLC and its VLC runtime in Applications |

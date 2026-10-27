@@ -14,8 +14,8 @@ The update also repairs album ordering, synchronization-field drafts, returning 
 
 Parental/PIN locking and paired LAN remote control are excluded as requested. Casting needs a compatible receiver; subtitle downloads need provider credentials. These device/provider flows and native macOS/Arch playback must be qualified separately from Rust tests.
 
-## Distribution status
+## Downloads
 
-Version 0.1.2 is a release candidate until the new installer set has been built and its checksums verified. Published 0.1.1 installers remain available in the meantime. Existing packages must not be relabelled as this version.
+Download the four platform installers and their SHA-256 checksums from the [v0.1.2 release](https://github.com/benclawbot/Rust-VLC/releases/tag/v0.1.2). The published asset digests match the independently downloaded CI artifacts.
 
-The release workflow builds Windows x86_64, Arch Linux x86_64, macOS Apple Silicon and macOS Intel installers, audits the locked dependencies and checks every installer checksum before publishing. Current evidence and external build blockers are recorded in [VALIDATION.md](VALIDATION.md).
+The release workflow builds Windows x86_64, Arch Linux x86_64, macOS Apple Silicon and macOS Intel installers, audits the locked dependencies and checks every installer checksum before publishing. Validation results and remaining native-device checks are recorded in the [validation report](https://github.com/benclawbot/Rust-VLC/blob/main/docs/VALIDATION.md).
