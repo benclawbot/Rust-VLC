@@ -157,6 +157,7 @@ pub enum VlcError {
     InitializationFailed(String),
     PathNotUtf8(PathBuf),
     InvalidPath(PathBuf),
+    #[cfg(windows)]
     UnsupportedPathNamespace(PathBuf),
     MediaCreationFailed(String),
     PlaybackFailed(String),
@@ -217,6 +218,7 @@ impl fmt::Display for VlcError {
                 "The selected local media file is no longer available: {}",
                 path.display()
             ),
+            #[cfg(windows)]
             Self::UnsupportedPathNamespace(path) => write!(
                 formatter,
                 "This Windows media path uses a namespace that libVLC does not support: {}",

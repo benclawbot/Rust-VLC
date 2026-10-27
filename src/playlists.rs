@@ -564,7 +564,7 @@ mod tests {
             track_ids: vec![1],
         };
         assert_eq!(
-            export_m3u8(&playlist, &[track], Path::new("/music")),
+            export_m3u8(&playlist, &[track], std::path::Path::new("/music")),
             Err(M3u8Error::UnrepresentablePath)
         );
     }

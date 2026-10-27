@@ -7120,7 +7120,9 @@ mod tests {
     use slint::{Model, ModelRc, SharedString, VecModel};
     use std::cell::RefCell;
     use std::collections::{HashMap, VecDeque};
-    use std::path::{Path, PathBuf};
+    #[cfg(windows)]
+    use std::path::Path;
+    use std::path::PathBuf;
     use std::rc::Rc;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
