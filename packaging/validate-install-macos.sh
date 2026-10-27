@@ -54,7 +54,7 @@ assert_installed() {
   test -n "$libvlc_path" && test -e "$libvlc_path"
   plugin_count="$(find "$app/Contents/Frameworks/VLC.app/Contents/MacOS/plugins" -type f -name '*.dylib' | wc -l | tr -d ' ')"
   test "$plugin_count" -gt 0
-  lipo -verify_arch "$EXPECTED_ARCH" "$app/Contents/MacOS/rust-vlc"
+  lipo "$app/Contents/MacOS/rust-vlc" -verify_arch "$EXPECTED_ARCH"
 
   build_info="$app/Contents/Resources/BUILD-INFO.txt"
   target=x86_64-apple-darwin

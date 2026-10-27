@@ -16,25 +16,51 @@ assert_not_installed() {
   test ! -e /usr/bin/rust-vlc
 }
 
+fail_check() {
+  echo "FAILED install check: $*" >&2
+  exit 1
+}
+
+require_file() {
+  local description="$1" path="$2" kind="${3:-nonempty}"
+  case "$kind" in
+    nonempty) [[ -s "$path" ]] || fail_check "$description is missing or empty: $path" ;;
+    present) [[ -f "$path" ]] || fail_check "$description is missing: $path" ;;
+    executable) [[ -x "$path" ]] || fail_check "$description is missing or not executable: $path" ;;
+    *) fail_check "unknown file check kind '$kind' for $description" ;;
+  esac
+}
+
+require_directory() {
+  local description="$1" path="$2"
+  [[ -d "$path" ]] || fail_check "$description is missing: $path"
+}
+
+require_build_info_line() {
+  local expected="$1" file="$2"
+  grep -Fxq -- "$expected" "$file" || fail_check "build info lacks '$expected': $file"
+}
+
 assert_installed() {
   local expected_version="$1" expected_commit="${2:-}" package_info build_info plugin_count
-  test -x /usr/bin/rust-vlc
-  test -s /usr/share/applications/rust-vlc.desktop
-  test -s /usr/share/icons/hicolor/512x512/apps/rust-vlc.png
-  test -s /usr/share/doc/rust-vlc/BUILD-INFO.txt
-  test -f /usr/lib/libvlc.so.5
-  test -d /usr/lib/vlc/plugins
-  pacman -Q libvlc vlc-plugins-all >/dev/null
+  require_file 'Rust-VLC executable' /usr/bin/rust-vlc executable
+  require_file 'desktop entry' /usr/share/applications/rust-vlc.desktop
+  require_file '512 px application icon' /usr/share/icons/hicolor/512x512/apps/rust-vlc.png
+  require_file 'build info' /usr/share/doc/rust-vlc/BUILD-INFO.txt
+  require_file 'libVLC ABI-5 library' /usr/lib/libvlc.so.5 present
+  require_directory 'VLC plugin directory' /usr/lib/vlc/plugins
+  pacman -Q libvlc vlc-plugins-all >/dev/null || fail_check 'libvlc and vlc-plugins-all are not both installed'
   plugin_count="$(find /usr/lib/vlc/plugins -type f | wc -l | tr -d ' ')"
-  test "$plugin_count" -gt 0
+  [[ "$plugin_count" =~ ^[0-9]+$ ]] && (( plugin_count > 0 )) || fail_check "VLC plugin directory has no regular files: /usr/lib/vlc/plugins"
 
   package_info="$(pacman -Q rust-vlc)"
-  [[ "$package_info" == "rust-vlc $expected_version-1" ]]
+  [[ "$package_info" == "rust-vlc $expected_version-1" ]] || fail_check "expected package 'rust-vlc $expected_version-1', got '$package_info'"
   build_info=/usr/share/doc/rust-vlc/BUILD-INFO.txt
-  grep -Fxq 'Target: x86_64-unknown-linux-gnu' "$build_info"
-  grep -Fxq "Version: $expected_version" "$build_info"
-  grep -Eq '^Source commit: [0-9a-f]{40}$' "$build_info"
-  if [[ -n "$expected_commit" ]]; then grep -Fxq "Source commit: $expected_commit" "$build_info"; fi
+  require_build_info_line 'Target: x86_64-unknown-linux-gnu' "$build_info"
+  require_build_info_line "Version: $expected_version" "$build_info"
+  grep -Eq '^Source commit: [0-9a-f]{40}$' "$build_info" || fail_check "build info has an invalid source commit: $build_info"
+  if [[ -n "$expected_commit" ]]; then require_build_info_line "Source commit: $expected_commit" "$build_info"; fi
+  echo "Validated Rust-VLC $expected_version package, build metadata, libVLC 3 runtime and $plugin_count VLC plugin files."
 }
 
 new_sentinel() {
