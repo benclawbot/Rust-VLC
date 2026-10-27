@@ -1,6 +1,6 @@
 # Architecture
 
-Implementation snapshot: 2026-10-21. Rust-VLC is one Rust package with a Slint interface and a dynamically loaded libVLC 3 runtime. The Windows development path is implemented; native Arch Wayland/X11 and macOS playback qualification remain open. See [validation](VALIDATION.md) for evidence rather than inferring support from compilation.
+Implementation snapshot: 2026-10-26, source version 0.1.2. Rust-VLC is one Rust package with a Slint interface and a dynamically loaded libVLC 3 runtime. The expanded implementation is undergoing integrated review; native Arch Wayland/X11 and macOS playback qualification remain open. See [validation](VALIDATION.md) for evidence rather than inferring support from compilation.
 
 ## Modules and dependencies
 
@@ -15,6 +15,8 @@ Implementation snapshot: 2026-10-21. Rust-VLC is one Rust package with a Slint i
 | `scan.rs`, `library_worker.rs` | Bounded background folder traversal, metadata and artwork jobs |
 | `browse.rs`, `series.rs` | Music grouping and conservative filename-based series/season ordering |
 | `metadata.rs`, `credentials.rs` | Lofty tags, local art, bounded provider matching/cache and OS-backed TMDB credentials |
+| `subtitles.rs` | Bounded OpenSubtitles search/download, host/authentication checks, cancellation and validated subtitle cache |
+| `media_controls.rs` | UI-thread-owned OS media bridge with bounded owned callback events and cached metadata updates |
 | `storage.rs` | SQLite schema, migrations, native-path encoding and coalesced writes |
 | `platform.rs` | Runtime discovery from explicit installation and documented system locations |
 
@@ -38,19 +40,23 @@ Queue traversal preserves duplicate occurrences. Repeat-one applies only to natu
 
 Clicking a song plays its displayed collection at the clicked occurrence. Leading checkboxes never play media. Select all, Play selected and Add to playlist use displayed order. Movies and Music share one playback owner, so changing pages does not stop playback. Double-click starts a movie fullscreen; Escape leaves fullscreen without stopping it.
 
-Movie progress is periodically saved and captured on transport changes and exit. Resume is offered beyond ten seconds and below 95% completion; Start over plays from the beginning. Music starts from the beginning. Startup never autoplays. Queue restoration across application restarts is not implemented.
+Movie progress is periodically saved and captured on transport changes and exit. Resume is offered beyond ten seconds and below 95% completion; Start over plays from the beginning. Explicit new music selections start from the beginning. A queue checkpoint retains base entries, shuffled traversal, the selected duplicate occurrence, wrap state, repeat mode and position. Startup restores a ready queue without calling VLC Play; an explicit Play binds the saved position to its new load. An empty startup snapshot cannot replace a disk checkpoint before restoration is acknowledged.
+
+Returning to fullscreen and picture-in-picture reuse the same playback owner and load. The UI thread shares the latest decoded frame between windows; screenshots save packed RGBA pixels as PNG. Equalizer operations use libVLC's actual bands/presets and persist settings. A–B markers are load-scoped; sleep timers and cast targets are not restored automatically. Casting configures VLC's Chromecast output for a validated manual address and does not claim receiver confirmation.
 
 ## Persistence and native paths
 
-Schema version 2 stores media, local metadata/artwork overrides, ordered playlist entries, movie progress and selected view/volume/rate preferences. Duplicate playlist entries use their persisted positions. Album grouping uses album artist when available, retaining compilations with different performers.
+Schema version 4 stores media, local metadata/artwork overrides, ordered playlist entries, movie progress, watched roots, queue checkpoints, bookmarks, network history and preferences including equalizer settings. Duplicate playlist entries use their persisted positions. Album grouping uses album artist when available, retaining compilations with different performers; opened albums default to disc/track order.
 
 Native paths remain `PathBuf` in memory and are stored as Unix bytes or Windows UTF-16LE with an encoding discriminator. Display text may be lossy; playback paths are not reconstructed from it. Databases are platform-specific, not a cross-platform library interchange format.
+
+`TrackSource` distinguishes local files from validated network addresses. Network entries use a separate URL encoding in storage and `libvlc_media_new_location`; URLs are never substituted for native paths. HTTP, HTTPS, RTSP and RTMP require a host and reject userinfo/control characters. Signed query strings remain private in local storage for replay, while display labels and errors redact them. M3U8 interchange preserves duplicate entries and supports local references and validated network sources.
 
 At the libVLC boundary, recognized Windows verbatim drive and UNC prefixes are adapted to the paths VLC accepts; stored paths remain untouched. Unsupported device namespaces are rejected. The current libVLC path interface requires UTF-8; Unix names that cannot be represented in UTF-8 produce an explicit playback error rather than a lossy substitution.
 
 Transactions protect schema upgrades, library snapshots and playlist ordering. Recognized upgrades back up the existing database first. Future or unrecognized schemas are preserved and rejected. Imports are additive: an incomplete or disconnected scan never removes unseen media or history.
 
-Persistent roots, file fingerprints, replacement detection, root membership and full scan reconciliation remain planned. There is no root-removal action and no automatic deletion based on scan absence. Media files are always read-only.
+Watched roots persist as native paths and are scanned at startup, periodically and on request through the bounded library worker. Scan events carry their root and file size/modified-time fingerprints. Changed files can refresh metadata without replacing their media identity. Only complete scans reconcile availability; missing or offline files retain their library entries, playlists and history. Removing a root stops watching it and keeps imported entries and source media. Fingerprints use filesystem metadata rather than content hashes.
 
 ## Artwork and privacy
 

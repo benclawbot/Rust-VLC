@@ -158,6 +158,7 @@ mod tests {
     fn album_order_and_playlist_duplicates_define_the_actual_play_collection() {
         let tracks: Vec<Track> = (1..=3)
             .map(|id| Track {
+                source: crate::model::TrackSource::Local,
                 id,
                 path: PathBuf::from(format!("{id}.mp3")),
                 title: format!("Track{id}"),
@@ -205,18 +206,21 @@ mod tests {
     fn compilation_tracks_group_by_album_artist_then_fall_back_to_track_artist() {
         let tracks = vec![
             Track {
+                source: crate::model::TrackSource::Local,
                 id: 1,
                 path: PathBuf::from("one.mp3"),
                 title: "One".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: crate::model::TrackSource::Local,
                 id: 2,
                 path: PathBuf::from("two.mp3"),
                 title: "Two".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: crate::model::TrackSource::Local,
                 id: 3,
                 path: PathBuf::from("solo.mp3"),
                 title: "Solo".into(),

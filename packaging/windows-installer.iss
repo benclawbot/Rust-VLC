@@ -31,6 +31,7 @@ Uninstallable=yes
 
 [Files]
 Source: "{#SourceDir}\rust-vlc.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\BUILD-INFO.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README-runtime.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\VLC-THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Inter-OFL.txt"; DestDir: "{app}"; Flags: ignoreversion

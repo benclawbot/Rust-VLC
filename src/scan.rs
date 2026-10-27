@@ -2,6 +2,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::SystemTime;
 
 const MAX_SCAN_ENTRIES: usize = 100_000;
 const MAX_SCAN_DEPTH: usize = 64;
@@ -10,8 +11,16 @@ const MAX_WARNINGS: usize = 128;
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ScanOutcome {
     pub paths: Vec<PathBuf>,
+    pub fingerprints: Vec<FileFingerprint>,
     pub warnings: Vec<String>,
     pub complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileFingerprint {
+    pub path: PathBuf,
+    pub size: u64,
+    pub modified: Option<SystemTime>,
 }
 
 /// Enumerate supported local audio and video files without following symlinks.
@@ -159,12 +168,40 @@ pub fn scan_directory_with_cancel(root: &Path, cancel: &AtomicBool) -> ScanOutco
                     stack.push((path, depth + 1));
                 }
             } else if entry_type.is_file() && is_supported_media_path(&path) {
-                outcome.paths.push(path);
+                match fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.file_type().is_file() => {
+                        outcome.paths.push(path.clone());
+                        outcome.fingerprints.push(FileFingerprint {
+                            path,
+                            size: metadata.len(),
+                            modified: metadata.modified().ok(),
+                        });
+                    }
+                    Ok(_) => {
+                        outcome.complete = false;
+                        push_warning(
+                            &mut outcome.warnings,
+                            &mut omitted_warnings,
+                            "A media entry changed while the scan was running.".to_owned(),
+                        );
+                    }
+                    Err(_) => {
+                        outcome.complete = false;
+                        push_warning(
+                            &mut outcome.warnings,
+                            &mut omitted_warnings,
+                            "Unable to fingerprint a media entry.".to_owned(),
+                        );
+                    }
+                }
             }
         }
     }
 
     outcome.paths.sort();
+    outcome
+        .fingerprints
+        .sort_by(|left, right| left.path.cmp(&right.path));
     finish_warnings(&mut outcome.warnings, omitted_warnings);
     outcome
 }
@@ -267,6 +304,19 @@ mod tests {
         assert!(outcome.complete, "{:?}", outcome.warnings);
         assert!(outcome.warnings.is_empty());
         assert_eq!(outcome.paths, expected);
+        assert_eq!(outcome.fingerprints.len(), expected.len());
+        assert!(outcome
+            .fingerprints
+            .iter()
+            .all(|fingerprint| fingerprint.modified.is_some()));
+        assert_eq!(
+            outcome
+                .fingerprints
+                .iter()
+                .map(|fingerprint| fingerprint.path.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
         fs::remove_dir_all(root).expect("remove isolated scan fixture");
     }
 
@@ -280,6 +330,22 @@ mod tests {
         assert!(!outcome.complete);
         assert!(outcome.paths.is_empty());
         assert!(!outcome.warnings.is_empty());
+    }
+
+    #[test]
+    fn rescan_fingerprint_changes_when_file_size_changes() {
+        let root = temporary_directory();
+        let media = root.join("track.mp3");
+        fs::write(&media, b"old").expect("create media fixture");
+        let before = scan_directory(&root).fingerprints.remove(0);
+        fs::write(&media, b"a larger replacement").expect("replace media fixture");
+        let after = scan_directory(&root).fingerprints.remove(0);
+
+        assert_eq!(before.path, after.path);
+        assert_ne!(before, after);
+        assert_eq!(before.size, 3);
+        assert_eq!(after.size, 20);
+        fs::remove_dir_all(root).expect("remove isolated scan fixture");
     }
 
     #[test]

@@ -9,6 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  audit:
+    name: Audit locked dependencies
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install audit tool
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          cargo +1.95.0 install cargo-audit --version 0.22.2 --locked
+      - name: Check security advisories
+        run: cargo +1.95.0 audit --file Cargo.lock
+
   build:
     name: Build ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -87,7 +99,7 @@ jobs:
           $archive = Join-Path $dist "${packageName}.zip"
           Compress-Archive -Path (Join-Path $package "*") -DestinationPath $archive -Force
           $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          "$hash  ${packageName}.zip" | Set-Content -Encoding ascii "${archive}.sha256"
+          [System.IO.File]::WriteAllText("${archive}.sha256", "$hash  ${packageName}.zip`n", [System.Text.Encoding]::ASCII)
 
       - name: Package macOS app archive
         if: matrix.os == 'macos'

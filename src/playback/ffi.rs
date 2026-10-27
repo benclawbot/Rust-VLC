@@ -12,9 +12,11 @@
 use super::frame::{CallbackFrame, FrameLayout, FrameMailbox, MAX_IN_FLIGHT_FRAMES};
 use super::is_movie;
 use super::{
-    seek_target_ms, valid_media_delay, valid_playback_rate, valid_volume_percent, PlaybackTrack,
+    seek_target_ms, valid_cast_address, valid_equalizer_settings, valid_media_delay,
+    valid_playback_rate, valid_volume_percent, EqualizerSettings, PlaybackTrack,
+    EQUALIZER_BAND_COUNT,
 };
-use crate::model::Track;
+use crate::model::{Track, TrackSource};
 use crate::platform::{self, RuntimeCandidate};
 use libloading::Library;
 use reqwest::Url;
@@ -23,6 +25,7 @@ use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 type LibVlcGetVersion = unsafe extern "C" fn() -> *const c_char;
@@ -30,6 +33,7 @@ type LibVlcNew = unsafe extern "C" fn(c_int, *const *const c_char) -> *mut c_voi
 type LibVlcRelease = unsafe extern "C" fn(*mut c_void);
 type LibVlcErrmsg = unsafe extern "C" fn() -> *const c_char;
 type LibVlcMediaNewPath = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+type LibVlcMediaNewLocation = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
 type LibVlcMediaRelease = unsafe extern "C" fn(*mut c_void);
 type LibVlcMediaAddOption = unsafe extern "C" fn(*mut c_void, *const c_char);
 type LibVlcMediaPlayerNew = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
@@ -44,6 +48,18 @@ type LibVlcMediaPlayerGetLength = unsafe extern "C" fn(*mut c_void) -> i64;
 type LibVlcMediaPlayerSetTime = unsafe extern "C" fn(*mut c_void, i64);
 type LibVlcMediaPlayerIsSeekable = unsafe extern "C" fn(*mut c_void) -> c_int;
 type LibVlcMediaPlayerSetRate = unsafe extern "C" fn(*mut c_void, f32) -> c_int;
+type LibVlcEqualizerGetPresetCount = unsafe extern "C" fn() -> c_uint;
+type LibVlcEqualizerGetPresetName = unsafe extern "C" fn(c_uint) -> *const c_char;
+type LibVlcEqualizerGetBandCount = unsafe extern "C" fn() -> c_uint;
+type LibVlcEqualizerGetBandFrequency = unsafe extern "C" fn(c_uint) -> f32;
+type LibVlcEqualizerNew = unsafe extern "C" fn() -> *mut c_void;
+type LibVlcEqualizerNewFromPreset = unsafe extern "C" fn(c_uint) -> *mut c_void;
+type LibVlcEqualizerRelease = unsafe extern "C" fn(*mut c_void);
+type LibVlcEqualizerSetPreamp = unsafe extern "C" fn(*mut c_void, f32) -> c_int;
+type LibVlcEqualizerGetPreamp = unsafe extern "C" fn(*mut c_void) -> f32;
+type LibVlcEqualizerSetAmpAtIndex = unsafe extern "C" fn(*mut c_void, f32, c_uint) -> c_int;
+type LibVlcEqualizerGetAmpAtIndex = unsafe extern "C" fn(*mut c_void, c_uint) -> f32;
+type LibVlcMediaPlayerSetEqualizer = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
 type LibVlcAudioSetVolume = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
 type LibVlcAudioGetTrackCount = unsafe extern "C" fn(*mut c_void) -> c_int;
 type LibVlcAudioGetTrackDescription =
@@ -90,6 +106,20 @@ type LibVlcVideoSetCallbacks = unsafe extern "C" fn(
 );
 type LibVlcVideoSetFormatCallbacks =
     unsafe extern "C" fn(*mut c_void, Option<LibVlcVideoFormat>, Option<LibVlcVideoCleanup>);
+type LibVlcMediaPlayerEventManager = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+type LibVlcEventCallback = unsafe extern "C" fn(*const LibVlcEvent, *mut c_void);
+type LibVlcEventAttach =
+    unsafe extern "C" fn(*mut c_void, c_int, Option<LibVlcEventCallback>, *mut c_void) -> c_int;
+type LibVlcEventDetach =
+    unsafe extern "C" fn(*mut c_void, c_int, Option<LibVlcEventCallback>, *mut c_void);
+
+const LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR: c_int = 0x10A;
+const CAST_DEMUX_FILTER_OPTION: &str = ":demux-filter=cc_demux";
+
+#[repr(C)]
+struct LibVlcEvent {
+    event_type: c_int,
+}
 
 #[repr(C)]
 struct LibVlcTrackDescription {
@@ -194,7 +224,7 @@ impl fmt::Display for VlcError {
             ),
             Self::MediaCreationFailed(message) => write!(
                 formatter,
-                "libVLC could not open the selected media file. Check that the file still exists and that the VLC codec plugins are installed. {message}"
+                "libVLC could not open the selected media. Check that it is available and that the VLC codec plugins are installed. {message}"
             ),
             Self::PlaybackFailed(message) => write!(
                 formatter,
@@ -217,6 +247,7 @@ struct Api {
     release: LibVlcRelease,
     errmsg: LibVlcErrmsg,
     media_new_path: LibVlcMediaNewPath,
+    media_new_location: LibVlcMediaNewLocation,
     media_release: LibVlcMediaRelease,
     media_add_option: LibVlcMediaAddOption,
     player_new: LibVlcMediaPlayerNew,
@@ -231,6 +262,18 @@ struct Api {
     player_set_time: LibVlcMediaPlayerSetTime,
     player_is_seekable: LibVlcMediaPlayerIsSeekable,
     player_set_rate: LibVlcMediaPlayerSetRate,
+    equalizer_get_preset_count: LibVlcEqualizerGetPresetCount,
+    equalizer_get_preset_name: LibVlcEqualizerGetPresetName,
+    equalizer_get_band_count: LibVlcEqualizerGetBandCount,
+    equalizer_get_band_frequency: LibVlcEqualizerGetBandFrequency,
+    equalizer_new: LibVlcEqualizerNew,
+    equalizer_new_from_preset: LibVlcEqualizerNewFromPreset,
+    equalizer_release: LibVlcEqualizerRelease,
+    equalizer_set_preamp: LibVlcEqualizerSetPreamp,
+    equalizer_get_preamp: LibVlcEqualizerGetPreamp,
+    equalizer_set_amp_at_index: LibVlcEqualizerSetAmpAtIndex,
+    equalizer_get_amp_at_index: LibVlcEqualizerGetAmpAtIndex,
+    player_set_equalizer: LibVlcMediaPlayerSetEqualizer,
     audio_set_volume: LibVlcAudioSetVolume,
     audio_get_track_count: LibVlcAudioGetTrackCount,
     audio_get_track_description: LibVlcAudioGetTrackDescription,
@@ -253,6 +296,9 @@ struct Api {
     chapter_descriptions_release: LibVlcChapterDescriptionsRelease,
     video_set_callbacks: LibVlcVideoSetCallbacks,
     video_set_format_callbacks: LibVlcVideoSetFormatCallbacks,
+    media_player_event_manager: LibVlcMediaPlayerEventManager,
+    event_attach: LibVlcEventAttach,
+    event_detach: LibVlcEventDetach,
 }
 
 pub struct Runtime {
@@ -340,6 +386,7 @@ impl Runtime {
             release: unsafe { symbol(&library, b"libvlc_release\0", &path)? },
             errmsg: unsafe { symbol(&library, b"libvlc_errmsg\0", &path)? },
             media_new_path: unsafe { symbol(&library, b"libvlc_media_new_path\0", &path)? },
+            media_new_location: unsafe { symbol(&library, b"libvlc_media_new_location\0", &path)? },
             media_release: unsafe { symbol(&library, b"libvlc_media_release\0", &path)? },
             media_add_option: unsafe { symbol(&library, b"libvlc_media_add_option\0", &path)? },
             player_new: unsafe { symbol(&library, b"libvlc_media_player_new\0", &path)? },
@@ -364,6 +411,56 @@ impl Runtime {
                 symbol(&library, b"libvlc_media_player_is_seekable\0", &path)?
             },
             player_set_rate: unsafe { symbol(&library, b"libvlc_media_player_set_rate\0", &path)? },
+            equalizer_get_preset_count: unsafe {
+                symbol(
+                    &library,
+                    b"libvlc_audio_equalizer_get_preset_count\0",
+                    &path,
+                )?
+            },
+            equalizer_get_preset_name: unsafe {
+                symbol(&library, b"libvlc_audio_equalizer_get_preset_name\0", &path)?
+            },
+            equalizer_get_band_count: unsafe {
+                symbol(&library, b"libvlc_audio_equalizer_get_band_count\0", &path)?
+            },
+            equalizer_get_band_frequency: unsafe {
+                symbol(
+                    &library,
+                    b"libvlc_audio_equalizer_get_band_frequency\0",
+                    &path,
+                )?
+            },
+            equalizer_new: unsafe { symbol(&library, b"libvlc_audio_equalizer_new\0", &path)? },
+            equalizer_new_from_preset: unsafe {
+                symbol(&library, b"libvlc_audio_equalizer_new_from_preset\0", &path)?
+            },
+            equalizer_release: unsafe {
+                symbol(&library, b"libvlc_audio_equalizer_release\0", &path)?
+            },
+            equalizer_set_preamp: unsafe {
+                symbol(&library, b"libvlc_audio_equalizer_set_preamp\0", &path)?
+            },
+            equalizer_get_preamp: unsafe {
+                symbol(&library, b"libvlc_audio_equalizer_get_preamp\0", &path)?
+            },
+            equalizer_set_amp_at_index: unsafe {
+                symbol(
+                    &library,
+                    b"libvlc_audio_equalizer_set_amp_at_index\0",
+                    &path,
+                )?
+            },
+            equalizer_get_amp_at_index: unsafe {
+                symbol(
+                    &library,
+                    b"libvlc_audio_equalizer_get_amp_at_index\0",
+                    &path,
+                )?
+            },
+            player_set_equalizer: unsafe {
+                symbol(&library, b"libvlc_media_player_set_equalizer\0", &path)?
+            },
             audio_set_volume: unsafe { symbol(&library, b"libvlc_audio_set_volume\0", &path)? },
             audio_get_track_count: unsafe {
                 symbol(&library, b"libvlc_audio_get_track_count\0", &path)?
@@ -420,6 +517,11 @@ impl Runtime {
             video_set_format_callbacks: unsafe {
                 symbol(&library, b"libvlc_video_set_format_callbacks\0", &path)?
             },
+            media_player_event_manager: unsafe {
+                symbol(&library, b"libvlc_media_player_event_manager\0", &path)?
+            },
+            event_attach: unsafe { symbol(&library, b"libvlc_event_attach\0", &path)? },
+            event_detach: unsafe { symbol(&library, b"libvlc_event_detach\0", &path)? },
         };
 
         let version_pointer = unsafe { (api.get_version)() };
@@ -547,6 +649,17 @@ fn subtitle_file_uri(path: &Path) -> Result<CString, VlcError> {
     CString::new(uri.as_str()).map_err(|_| VlcError::InvalidPath(path.to_path_buf()))
 }
 
+fn cast_media_options(address: &str) -> Result<[CString; 2], VlcError> {
+    if !valid_cast_address(address) {
+        return Err(VlcError::InvalidControl("cast target"));
+    }
+    let demux_filter = CString::new(CAST_DEMUX_FILTER_OPTION)
+        .expect("static Chromecast media option has no NUL byte");
+    let output = CString::new(format!(":sout=#chromecast{{ip={address}}}"))
+        .expect("cast target validation rejects NUL bytes");
+    Ok([demux_filter, output])
+}
+
 #[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct UnsupportedWindowsNamespace;
@@ -650,6 +763,7 @@ struct VideoCallbackContext {
     frames: Arc<FrameMailbox>,
     state: Mutex<VideoCallbackState>,
     buffer_returned: Condvar,
+    encountered_error: AtomicBool,
 }
 
 struct VideoCallbackState {
@@ -687,7 +801,29 @@ impl VideoCallbackContext {
         state.pending_frames.clear();
         drop(state);
         self.frames.reset();
+        self.encountered_error.store(false, Ordering::Release);
     }
+
+    fn take_encountered_error(&self) -> bool {
+        self.encountered_error.swap(false, Ordering::AcqRel)
+    }
+}
+
+fn latch_player_error_event(event_type: c_int, encountered_error: &AtomicBool) {
+    if event_type == LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR {
+        encountered_error.store(true, Ordering::Release);
+    }
+}
+
+unsafe extern "C" fn playback_event_callback(event: *const LibVlcEvent, opaque: *mut c_void) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if event.is_null() || opaque.is_null() {
+            return;
+        }
+        let context = unsafe { &*opaque.cast::<VideoCallbackContext>() };
+        let event_type = unsafe { (*event).event_type };
+        latch_player_error_event(event_type, &context.encountered_error);
+    }));
 }
 
 unsafe fn callback_context(opaque: *mut c_void) -> Option<Arc<VideoCallbackContext>> {
@@ -941,6 +1077,7 @@ unsafe extern "C" fn video_display(opaque: *mut c_void, picture: *mut c_void) {
 pub struct VlcEngine {
     _video_context: Arc<VideoCallbackContext>,
     video_opaque: *const VideoCallbackContext,
+    event_manager: NonNull<c_void>,
     runtime: Runtime,
     instance: NonNull<c_void>,
     player: NonNull<c_void>,
@@ -949,7 +1086,9 @@ pub struct VlcEngine {
 impl VlcEngine {
     pub fn new(frames: Arc<FrameMailbox>) -> Result<Self, VlcError> {
         let runtime = Runtime::load()?;
-        let instance = NonNull::new(unsafe { (runtime.api.new)(0, std::ptr::null()) })
+        let quiet = CString::new("--quiet").expect("static VLC option has no NUL byte");
+        let arguments = [quiet.as_ptr()];
+        let instance = NonNull::new(unsafe { (runtime.api.new)(1, arguments.as_ptr()) })
             .ok_or_else(|| VlcError::InitializationFailed(runtime.last_error()))?;
 
         let player = NonNull::new(unsafe { (runtime.api.player_new)(instance.as_ptr()) });
@@ -973,6 +1112,7 @@ impl VlcEngine {
                 shutting_down: false,
             }),
             buffer_returned: Condvar::new(),
+            encountered_error: AtomicBool::new(false),
         });
         let video_opaque = Arc::into_raw(Arc::clone(&video_context));
         unsafe {
@@ -990,9 +1130,43 @@ impl VlcEngine {
             );
         }
 
+        let event_manager =
+            NonNull::new(unsafe { (runtime.api.media_player_event_manager)(player.as_ptr()) });
+        let Some(event_manager) = event_manager else {
+            unsafe {
+                (runtime.api.player_release)(player.as_ptr());
+                (runtime.api.release)(instance.as_ptr());
+                video_context.reset_after_stop();
+                drop(Arc::from_raw(video_opaque));
+            }
+            return Err(VlcError::InitializationFailed(
+                "libVLC could not monitor playback errors.".to_owned(),
+            ));
+        };
+        let event_attach_result = unsafe {
+            (runtime.api.event_attach)(
+                event_manager.as_ptr(),
+                LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR,
+                Some(playback_event_callback),
+                video_opaque.cast_mut().cast(),
+            )
+        };
+        if event_attach_result != 0 {
+            unsafe {
+                (runtime.api.player_release)(player.as_ptr());
+                (runtime.api.release)(instance.as_ptr());
+                video_context.reset_after_stop();
+                drop(Arc::from_raw(video_opaque));
+            }
+            return Err(VlcError::InitializationFailed(
+                "libVLC could not monitor playback errors.".to_owned(),
+            ));
+        }
+
         Ok(Self {
             _video_context: video_context,
             video_opaque,
+            event_manager,
             runtime,
             instance,
             player,
@@ -1001,6 +1175,123 @@ impl VlcEngine {
 
     pub fn version(&self) -> &str {
         &self.runtime.version
+    }
+
+    pub(super) fn equalizer_metadata(&self) -> (Vec<f32>, Vec<String>) {
+        let api = self.runtime.api;
+        let band_count = (unsafe { (api.equalizer_get_band_count)() } as usize).min(128);
+        let bands = (0..band_count)
+            .map(|index| unsafe { (api.equalizer_get_band_frequency)(index as c_uint) })
+            .collect();
+        let preset_count = (unsafe { (api.equalizer_get_preset_count)() } as usize).min(128);
+        let presets = (0..preset_count)
+            .map(|index| {
+                let name = unsafe { (api.equalizer_get_preset_name)(index as c_uint) };
+                if name.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(name) }
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            })
+            .collect();
+        (bands, presets)
+    }
+
+    pub(super) fn equalizer_preset_settings(
+        &self,
+        index: usize,
+    ) -> Result<EqualizerSettings, VlcError> {
+        let api = self.runtime.api;
+        let preset_count = unsafe { (api.equalizer_get_preset_count)() } as usize;
+        if index >= preset_count || index > c_uint::MAX as usize {
+            return Err(VlcError::InvalidControl("equalizer preset"));
+        }
+        if unsafe { (api.equalizer_get_band_count)() } as usize != EQUALIZER_BAND_COUNT {
+            return Err(VlcError::InvalidControl("equalizer band layout"));
+        }
+        let equalizer = NonNull::new(unsafe { (api.equalizer_new_from_preset)(index as c_uint) })
+            .ok_or(VlcError::ControlFailed {
+            action: "load the equalizer preset",
+            message: "libVLC could not create the preset.".to_owned(),
+        })?;
+        let settings = EqualizerSettings {
+            enabled: true,
+            preamp_db: unsafe { (api.equalizer_get_preamp)(equalizer.as_ptr()) },
+            bands_db: std::array::from_fn(|band| unsafe {
+                (api.equalizer_get_amp_at_index)(equalizer.as_ptr(), band as c_uint)
+            }),
+            preset_index: Some(index),
+        };
+        unsafe { (api.equalizer_release)(equalizer.as_ptr()) };
+        Ok(settings)
+    }
+
+    pub(super) fn set_equalizer_settings(
+        &self,
+        settings: &EqualizerSettings,
+    ) -> Result<(), VlcError> {
+        if !valid_equalizer_settings(settings) {
+            return Err(VlcError::InvalidControl("equalizer gains"));
+        }
+        let api = self.runtime.api;
+        let player = self.player.as_ptr();
+        if !settings.enabled {
+            if unsafe { (api.player_set_equalizer)(player, std::ptr::null_mut()) } != 0 {
+                return Err(VlcError::ControlFailed {
+                    action: "disable the equalizer",
+                    message: "libVLC rejected the equalizer change.".to_owned(),
+                });
+            }
+            return Ok(());
+        }
+        if unsafe { (api.equalizer_get_band_count)() } as usize != EQUALIZER_BAND_COUNT {
+            return Err(VlcError::InvalidControl("equalizer band layout"));
+        }
+        let equalizer = if let Some(index) = settings.preset_index {
+            if index >= unsafe { (api.equalizer_get_preset_count)() } as usize
+                || index > c_uint::MAX as usize
+            {
+                return Err(VlcError::InvalidControl("equalizer preset"));
+            }
+            NonNull::new(unsafe { (api.equalizer_new_from_preset)(index as c_uint) })
+        } else {
+            NonNull::new(unsafe { (api.equalizer_new)() })
+        }
+        .ok_or(VlcError::ControlFailed {
+            action: "enable the equalizer",
+            message: "libVLC could not create the equalizer.".to_owned(),
+        })?;
+
+        let result = (|| {
+            if unsafe { (api.equalizer_set_preamp)(equalizer.as_ptr(), settings.preamp_db) } != 0 {
+                return Err(VlcError::ControlFailed {
+                    action: "set the equalizer preamp",
+                    message: "libVLC rejected the equalizer change.".to_owned(),
+                });
+            }
+            for (index, gain_db) in settings.bands_db.iter().copied().enumerate() {
+                if unsafe {
+                    (api.equalizer_set_amp_at_index)(equalizer.as_ptr(), gain_db, index as c_uint)
+                } != 0
+                {
+                    return Err(VlcError::ControlFailed {
+                        action: "set an equalizer band",
+                        message: "libVLC rejected the equalizer change.".to_owned(),
+                    });
+                }
+            }
+            if unsafe { (api.player_set_equalizer)(player, equalizer.as_ptr()) } != 0 {
+                return Err(VlcError::ControlFailed {
+                    action: "apply the equalizer",
+                    message: "libVLC rejected the equalizer change.".to_owned(),
+                });
+            }
+            Ok(())
+        })();
+        unsafe { (api.equalizer_release)(equalizer.as_ptr()) };
+        result
     }
 
     pub(super) fn media_controls(&self) -> MediaControls {
@@ -1162,6 +1453,10 @@ impl VlcEngine {
         self.stop_and_clear_internal();
     }
 
+    pub(super) fn take_encountered_error(&self) -> bool {
+        self._video_context.take_encountered_error()
+    }
+
     pub fn set_paused(&self, paused: bool) {
         unsafe {
             (self.runtime.api.player_set_pause)(self.player.as_ptr(), i32::from(paused));
@@ -1171,35 +1466,70 @@ impl VlcEngine {
     #[cfg(test)]
     pub fn play(&mut self, track: &Track) -> Result<(), VlcError> {
         self.stop_and_clear();
-        self.play_after_stop(track)
+        self.play_after_stop_to(track, None)
     }
 
-    pub(super) fn play_after_stop(&mut self, track: &Track) -> Result<(), VlcError> {
-        if !track.path.is_file() {
-            return Err(VlcError::InvalidPath(track.path.clone()));
-        }
+    pub(super) fn play_after_stop_to(
+        &mut self,
+        track: &Track,
+        cast_target: Option<&str>,
+    ) -> Result<(), VlcError> {
+        let (media, network_source) = match &track.source {
+            TrackSource::Local => {
+                if !track.path.is_file() {
+                    return Err(VlcError::InvalidPath(track.path.clone()));
+                }
+                let path_string = track
+                    .path
+                    .to_str()
+                    .ok_or_else(|| VlcError::PathNotUtf8(track.path.clone()))?;
+                #[cfg(windows)]
+                let path_string = windows_vlc_path(path_string)
+                    .map_err(|_| VlcError::UnsupportedPathNamespace(track.path.clone()))?;
+                #[cfg(not(windows))]
+                let path_string = path_string.to_owned();
+                let native_path = CString::new(path_string)
+                    .map_err(|_| VlcError::PathNotUtf8(track.path.clone()))?;
+                let media = NonNull::new(unsafe {
+                    (self.runtime.api.media_new_path)(self.instance.as_ptr(), native_path.as_ptr())
+                })
+                .ok_or_else(|| VlcError::MediaCreationFailed(self.runtime.last_error()))?;
+                (media, false)
+            }
+            TrackSource::Network(url) => {
+                let location = CString::new(url.as_str())
+                    .map_err(|_| VlcError::InvalidControl("network media URL"))?;
+                let media = NonNull::new(unsafe {
+                    (self.runtime.api.media_new_location)(self.instance.as_ptr(), location.as_ptr())
+                })
+                .ok_or_else(|| {
+                    VlcError::MediaCreationFailed(
+                        "libVLC could not create the network stream.".to_owned(),
+                    )
+                })?;
+                (media, true)
+            }
+        };
 
-        let path_string = track
-            .path
-            .to_str()
-            .ok_or_else(|| VlcError::PathNotUtf8(track.path.clone()))?;
-        #[cfg(windows)]
-        let path_string = windows_vlc_path(path_string)
-            .map_err(|_| VlcError::UnsupportedPathNamespace(track.path.clone()))?;
-        #[cfg(not(windows))]
-        let path_string = path_string.to_owned();
-        let native_path =
-            CString::new(path_string).map_err(|_| VlcError::PathNotUtf8(track.path.clone()))?;
-
-        let media = NonNull::new(unsafe {
-            (self.runtime.api.media_new_path)(self.instance.as_ptr(), native_path.as_ptr())
-        })
-        .ok_or_else(|| VlcError::MediaCreationFailed(self.runtime.last_error()))?;
+        let cast_options = match cast_target.map(cast_media_options).transpose() {
+            Ok(options) => options,
+            Err(error) => {
+                unsafe { (self.runtime.api.media_release)(media.as_ptr()) };
+                return Err(error);
+            }
+        };
+        self._video_context
+            .encountered_error
+            .store(false, Ordering::Release);
 
         unsafe {
             if !is_movie(track) {
                 let no_video = CString::new(":no-video").expect("static option has no NUL byte");
                 (self.runtime.api.media_add_option)(media.as_ptr(), no_video.as_ptr());
+            }
+            if let Some([demux_filter, output]) = cast_options {
+                (self.runtime.api.media_add_option)(media.as_ptr(), demux_filter.as_ptr());
+                (self.runtime.api.media_add_option)(media.as_ptr(), output.as_ptr());
             }
             (self.runtime.api.player_set_media)(self.player.as_ptr(), media.as_ptr());
             (self.runtime.api.media_release)(media.as_ptr());
@@ -1208,7 +1538,11 @@ impl VlcEngine {
         if unsafe { (self.runtime.api.player_play)(self.player.as_ptr()) } != 0 {
             let message = self.runtime.last_error();
             self.stop_and_clear();
-            return Err(VlcError::PlaybackFailed(message));
+            return Err(VlcError::PlaybackFailed(if network_source {
+                "libVLC could not start the network stream.".to_owned()
+            } else {
+                message
+            }));
         }
         Ok(())
     }
@@ -1306,6 +1640,14 @@ impl VlcEngine {
 impl Drop for VlcEngine {
     fn drop(&mut self) {
         unsafe {
+            // VLC 3 holds its event-manager lock while invoking callbacks; detach
+            // waits for any in-flight error callback before the opaque Arc is freed.
+            (self.runtime.api.event_detach)(
+                self.event_manager.as_ptr(),
+                LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR,
+                Some(playback_event_callback),
+                self.video_opaque.cast_mut().cast(),
+            );
             (self.runtime.api.player_stop)(self.player.as_ptr());
             (self.runtime.api.player_release)(self.player.as_ptr());
             (self.runtime.api.release)(self.instance.as_ptr());
@@ -1319,11 +1661,13 @@ impl Drop for VlcEngine {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_track_descriptions, is_libvlc_3, subtitle_file_uri, video_cleanup, video_display,
-        video_lock, video_unlock, windows_vlc_path, LibVlcTrackDescription, Runtime,
-        VideoCallbackContext, VideoCallbackState, VlcEngine, VlcError,
+        cast_media_options, copy_track_descriptions, is_libvlc_3, playback_event_callback,
+        subtitle_file_uri, video_cleanup, video_display, video_lock, video_unlock,
+        windows_vlc_path, LibVlcEvent, LibVlcTrackDescription, Runtime, VideoCallbackContext,
+        VideoCallbackState, VlcEngine, VlcError, CAST_DEMUX_FILTER_OPTION,
+        LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR,
     };
-    use crate::model::Track;
+    use crate::model::{Track, TrackSource};
     use crate::platform::RuntimeCandidate;
     use crate::playback::frame::{FrameLayout, FrameMailbox, MAX_IN_FLIGHT_FRAMES};
     use crate::playback::queue::RepeatMode;
@@ -1331,11 +1675,16 @@ mod tests {
     use std::f64::consts::TAU;
     use std::ffi::CString;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    const HTTP_404_CHILD_ENV: &str = "RUST_VLC_HTTP_404_SUBPROCESS";
+    const SIGNED_URL_MARKER: &str = "RUST_VLC_SIGNED_QUERY_MARKER_6c8d2f";
 
     #[test]
     fn missing_runtime_has_actionable_install_guidance() {
@@ -1354,6 +1703,64 @@ mod tests {
         assert!(is_libvlc_3("3.0.22 Vetinari"));
         assert!(!is_libvlc_3("4.0.0"));
         assert!(!is_libvlc_3("unknown"));
+    }
+
+    #[test]
+    fn playback_error_callback_latches_only_the_libvlc_3024_error_event() {
+        let context = callback_test_context(Arc::new(FrameMailbox::default()));
+        let opaque = Arc::as_ptr(&context).cast_mut().cast();
+        let harmless_event = LibVlcEvent { event_type: 0x109 };
+        unsafe { playback_event_callback(&harmless_event, opaque) };
+        assert!(!context.take_encountered_error());
+
+        let error_event = LibVlcEvent {
+            event_type: LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR,
+        };
+        assert_eq!(LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR, 0x10A);
+        unsafe { playback_event_callback(&error_event, opaque) };
+        assert!(context.take_encountered_error());
+        assert!(!context.take_encountered_error());
+    }
+
+    #[test]
+    fn cast_output_adds_the_required_cc_demux_filter() {
+        let options = cast_media_options("192.168.1.25").expect("valid target should build");
+        assert_eq!(options[0].to_str().unwrap(), CAST_DEMUX_FILTER_OPTION);
+        assert_eq!(options[0].to_str().unwrap(), ":demux-filter=cc_demux");
+        assert_eq!(
+            options[1].to_str().unwrap(),
+            ":sout=#chromecast{ip=192.168.1.25}"
+        );
+        assert!(cast_media_options("bad};:sout=#file").is_err());
+    }
+
+    #[test]
+    #[ignore = "requires an installed libVLC 3 runtime"]
+    fn installed_runtime_reports_and_applies_equalizer_settings() {
+        let engine = VlcEngine::new(Arc::new(FrameMailbox::default()))
+            .expect("installed libVLC 3 should initialize");
+        let (frequencies, presets) = engine.equalizer_metadata();
+        assert_eq!(frequencies.len(), super::super::EQUALIZER_BAND_COUNT);
+        assert!(frequencies
+            .iter()
+            .all(|frequency| frequency.is_finite() && *frequency > 0.0));
+        assert!(!presets.is_empty());
+
+        let mut settings = engine
+            .equalizer_preset_settings(0)
+            .expect("libVLC should provide its first equalizer preset");
+        engine
+            .set_equalizer_settings(&settings)
+            .expect("libVLC should apply the preset to the player");
+        settings.preset_index = None;
+        settings.bands_db[0] = 1.5;
+        engine
+            .set_equalizer_settings(&settings)
+            .expect("libVLC should apply a custom band value");
+        settings.enabled = false;
+        engine
+            .set_equalizer_settings(&settings)
+            .expect("libVLC should detach the equalizer");
     }
 
     #[test]
@@ -1474,6 +1881,7 @@ mod tests {
                 shutting_down: false,
             }),
             buffer_returned: Condvar::new(),
+            encountered_error: AtomicBool::new(false),
         });
         let opaque = Arc::into_raw(Arc::clone(&context))
             .cast_mut()
@@ -1650,6 +2058,7 @@ mod tests {
                 shutting_down: false,
             }),
             buffer_returned: Condvar::new(),
+            encountered_error: AtomicBool::new(false),
         })
     }
 
@@ -1779,12 +2188,14 @@ mod tests {
                 path: path.clone(),
                 title: "Generated red movie".to_owned(),
                 format: super::super::MOVIE_FORMAT.to_owned(),
+                source: TrackSource::Local,
             },
             Track {
                 id: 2,
                 path: blue_path,
                 title: "Generated blue movie".to_owned(),
                 format: super::super::MOVIE_FORMAT.to_owned(),
+                source: TrackSource::Local,
             },
         ];
         for iteration in 0..20 {
@@ -1844,6 +2255,7 @@ mod tests {
             path: path.with_file_name(format!("missing-rust-vlc-test-{}.mkv", std::process::id())),
             title: "Missing replacement movie".to_owned(),
             format: super::super::MOVIE_FORMAT.to_owned(),
+            source: TrackSource::Local,
         };
         assert!(!missing_track.path.exists());
         assert!(matches!(
@@ -2047,6 +2459,7 @@ mod tests {
             path: missing_path.clone(),
             title: "Missing next track".to_owned(),
             format: "WAV".to_owned(),
+            source: TrackSource::Local,
         };
         let worker = PlaybackWorker::spawn().expect("playback worker should start");
         worker
@@ -2105,6 +2518,171 @@ mod tests {
         assert!(snapshot
             .message
             .contains(&missing_path.display().to_string()));
+    }
+
+    #[test]
+    #[ignore = "requires an installed libVLC 3 runtime"]
+    fn native_http_404_worker_keeps_failed_track_and_never_logs_signed_url() {
+        if std::env::var_os(HTTP_404_CHILD_ENV).is_some() {
+            run_native_http_404_worker_child();
+            return;
+        }
+
+        let executable = std::env::current_exe().expect("test executable path should be available");
+        let output = std::process::Command::new(executable)
+            .args([
+                "--exact",
+                "playback::ffi::tests::native_http_404_worker_keeps_failed_track_and_never_logs_signed_url",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(HTTP_404_CHILD_ENV, "1")
+            .output()
+            .expect("native VLC regression subprocess should start");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stderr.contains(SIGNED_URL_MARKER),
+            "libVLC wrote the signed URL marker to stderr"
+        );
+        assert!(
+            !stdout.contains(SIGNED_URL_MARKER),
+            "libVLC wrote the signed URL marker to stdout"
+        );
+        assert!(
+            output.status.success(),
+            "native HTTP 404 regression subprocess failed:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+
+    fn run_native_http_404_worker_child() {
+        let worker = PlaybackWorker::spawn().expect("playback worker should start");
+        let runtime_deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let snapshot = worker.snapshot();
+            if snapshot.runtime_checked {
+                assert!(
+                    snapshot.runtime_available,
+                    "native regression requires installed libVLC 3: {}",
+                    snapshot.runtime_message
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < runtime_deadline,
+                "libVLC runtime did not finish initializing within 120 seconds"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        let server = Http404Fixture::start();
+        let first_url = format!("http://{}/first?token={SIGNED_URL_MARKER}", server.address);
+        let second_url = format!("http://{}/second?token={SIGNED_URL_MARKER}", server.address);
+        let first = Track::from_network_url(71, &first_url)
+            .expect("the local signed HTTP URL should be accepted");
+        let second = Track::from_network_url(72, &second_url)
+            .expect("the second local HTTP URL should be accepted");
+        worker
+            .submit(PlaybackCommand::SetRepeat(RepeatMode::All))
+            .expect("worker should accept Repeat All");
+        worker
+            .submit(PlaybackCommand::PlayQueue {
+                tracks: vec![first, second],
+                start_index: 0,
+                resume_position_ms: None,
+            })
+            .expect("worker should accept the signed URL queue");
+
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let initial_generation = loop {
+            let snapshot = worker.snapshot();
+            if snapshot.state == PlaybackUiState::Error && server.request_count() > 0 {
+                assert_eq!(snapshot.current_id, Some(71));
+                assert_eq!(snapshot.queue_index, 1);
+                assert_eq!(snapshot.queue_len, 2);
+                assert_eq!(snapshot.repeat_mode, RepeatMode::All);
+                assert!(!snapshot.message.contains(SIGNED_URL_MARKER));
+                assert!(!snapshot.message.contains("token="));
+                break snapshot.load_generation;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "HTTP 404 did not reach a stable playback error; snapshot: {snapshot:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        };
+
+        thread::sleep(Duration::from_millis(1_000));
+        let snapshot = worker.snapshot();
+        assert_eq!(snapshot.current_id, Some(71));
+        assert_eq!(snapshot.queue_index, 1);
+        assert_eq!(snapshot.load_generation, initial_generation);
+        assert_eq!(snapshot.state, PlaybackUiState::Error);
+        assert!(
+            server.request_count() > 0,
+            "VLC did not request the local 404 URL"
+        );
+    }
+
+    struct Http404Fixture {
+        address: SocketAddr,
+        requests: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Http404Fixture {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .expect("local HTTP fixture should bind an ephemeral port");
+            listener
+                .set_nonblocking(true)
+                .expect("local HTTP fixture should use nonblocking accept");
+            let address = listener
+                .local_addr()
+                .expect("local HTTP fixture should report its address");
+            let requests = Arc::new(AtomicUsize::new(0));
+            let request_counter = Arc::clone(&requests);
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_server = Arc::clone(&stop);
+            let server_thread = thread::spawn(move || {
+                while !stop_server.load(Ordering::Acquire) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            request_counter.fetch_add(1, Ordering::Relaxed);
+                            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                            let mut request = [0_u8; 2048];
+                            let _ = stream.read(&mut request);
+                            let _ = stream.write_all(
+                                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            );
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Self {
+                address,
+                requests,
+                stop,
+                thread: Some(server_thread),
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.requests.load(Ordering::Relaxed)
+        }
+    }
+
+    impl Drop for Http404Fixture {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(server_thread) = self.thread.take() {
+                let _ = server_thread.join();
+            }
+        }
     }
 
     struct TemporaryFile(PathBuf);

@@ -8,6 +8,18 @@ permissions:
   contents: read
 
 jobs:
+  audit:
+    name: Audit locked dependencies
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install audit tool
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          cargo +1.95.0 install cargo-audit --version 0.22.2 --locked
+      - name: Check security advisories
+        run: cargo +1.95.0 audit --file Cargo.lock
+
   build:
     name: Build ${{ matrix.os }} ${{ matrix.arch }} installer
     runs-on: ${{ matrix.runner }}
@@ -108,6 +120,9 @@ jobs:
           $vlcPackage = Join-Path $package "VLC"
           New-Item -ItemType Directory -Force -Path $package, $vlcPackage, $dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/rust-vlc.exe" (Join-Path $package "rust-vlc.exe")
+          $exeVersion = (Get-Item (Join-Path $package "rust-vlc.exe")).VersionInfo
+          $expectedVersion = [Version]::Parse(($version -split '[-+]')[0])
+          if ($exeVersion.FileMajorPart -ne $expectedVersion.Major -or $exeVersion.FileMinorPart -ne $expectedVersion.Minor -or $exeVersion.FileBuildPart -ne $expectedVersion.Build -or $exeVersion.ProductName -ne "Rust-VLC" -or $exeVersion.ProductVersion -ne $version) { throw "The Windows executable is missing the expected PE version resources for $version" }
           Copy-Item "packaging/RUNTIME.md" (Join-Path $package "README-runtime.md")
           Copy-Item "packaging/VLC-THIRD-PARTY.md" (Join-Path $package "VLC-THIRD-PARTY.md")
           Copy-Item "assets/fonts/OFL.txt" (Join-Path $package "Inter-OFL.txt")
@@ -119,15 +134,24 @@ jobs:
           if ($vlcHash -ne "fcf30850371ad10c9373cc4f0f4501e7dee49e3e9ae9f20c72fb2661a1ca6323") { throw "VLC archive SHA-256 mismatch: $vlcHash" }
           Expand-Archive -LiteralPath $vlcZip -DestinationPath $vlcExtract
           $libvlc = Get-ChildItem -Path $vlcExtract -Filter "libvlc.dll" -File -Recurse | Select-Object -First 1
-          if ($null -eq $libvlc -or -not (Test-Path (Join-Path $libvlc.Directory.FullName "plugins"))) { throw "The VLC archive is missing libvlc.dll or its plugins folder" }
-          Get-ChildItem -LiteralPath $libvlc.Directory.FullName -Force | Copy-Item -Destination $vlcPackage -Recurse -Force
+          if ($null -eq $libvlc) { throw "The VLC archive is missing libvlc.dll" }
+          $vlcRoot = $libvlc.Directory.FullName
+          $vlcPlugins = Join-Path $vlcRoot "plugins"
+          if (-not (Test-Path (Join-Path $vlcRoot "libvlccore.dll")) -or -not (Test-Path $vlcPlugins -PathType Container)) { throw "The VLC archive is missing libvlccore.dll or its plugins folder" }
+          $pluginDllCount = @(Get-ChildItem -LiteralPath $vlcPlugins -Filter "*.dll" -File -Recurse).Count
+          if ($pluginDllCount -eq 0) { throw "The VLC archive contains no plugin DLLs" }
+          $runtimeFileCount = @(Get-ChildItem -LiteralPath $vlcRoot -File -Force -Recurse).Count
+          Get-ChildItem -LiteralPath $vlcRoot -Force | Copy-Item -Destination $vlcPackage -Recurse -Force
+          $bundledPluginDllCount = @(Get-ChildItem -LiteralPath (Join-Path $vlcPackage "plugins") -Filter "*.dll" -File -Recurse).Count
+          $bundledRuntimeFileCount = @(Get-ChildItem -LiteralPath $vlcPackage -File -Force -Recurse).Count
+          if ($bundledPluginDllCount -ne $pluginDllCount -or $bundledRuntimeFileCount -ne $runtimeFileCount) { throw "The packaged VLC directory is incomplete" }
           "Target: ${{ matrix.target }}`nVersion: $version`nSource commit: $env:GITHUB_SHA`nVLC runtime: 3.0.24`nVLC archive SHA-256: $vlcHash" | Set-Content -Encoding ascii (Join-Path $package "BUILD-INFO.txt")
           $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
           & $compiler "/DAppVersion=$version" "/DSourceDir=$package" "/DOutputDir=$dist" "packaging\windows-installer.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
           $installer = Join-Path $dist "rust-vlc-windows-x86_64-setup.exe"
           $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
-          "$hash  rust-vlc-windows-x86_64-setup.exe" | Set-Content -Encoding ascii "$installer.sha256"
+          [IO.File]::WriteAllText("$installer.sha256", "$hash  rust-vlc-windows-x86_64-setup.exe`n", [Text.Encoding]::ASCII)
 
       - name: Package macOS installer
         if: matrix.os == 'macos'
@@ -216,7 +240,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: build
+    needs: [build, audit]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -234,8 +258,15 @@ jobs:
         run: |
           set -euo pipefail
           test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 8
+          test "$(find release-assets -maxdepth 1 -type f -name '*.sha256' | wc -l)" -eq 4
+          for checksum in release-assets/*.sha256; do
+            (cd release-assets && sha256sum --check --strict "$(basename "$checksum")")
+          done
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+            if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true" ]; then
+              gh release edit "$GITHUB_REF_NAME" --draft=false
+            fi
           else
             gh release create "$GITHUB_REF_NAME" release-assets/* \
               --title "Rust-VLC $GITHUB_REF_NAME" --generate-notes --verify-tag

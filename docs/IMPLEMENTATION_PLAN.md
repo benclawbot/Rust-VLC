@@ -1,5 +1,7 @@
 # Implementation plan
 
+Current work, 2026-10-26: source version 0.1.2 is implementing queue/root persistence and the P01/P02/P04 desktop feature scope, plus the release-review fixes. P03 parental/PIN locking and paired LAN remote control were explicitly excluded by the user. The baseline gates below remain open until the new integrated review and validation evidence is recorded; implemented code must not be mistaken for tested installers or complete native platform acceptance.
+
 Planning baseline: 2026-10-20. The approved targets are Arch Linux, macOS, and Windows. The application is local-first; online artwork is optional. The first release includes video/series, music, ordered playlists, history, and packaging. Android-only services are replaced with desktop equivalents.
 
 ## Gates and status
@@ -9,13 +11,13 @@ Planning baseline: 2026-10-20. The approved targets are Arch Linux, macOS, and W
 | D0 | Selected HTML design and requested interactions | Accepted: Archive style, Movies/Music, artwork and playlist interactions |
 | M0 | Slint/libVLC feasibility with measured real playback | Windows video smoke implemented; Arch Wayland/X11 performance gate remains open |
 | M1 | Arch desktop player with functional transport and queue | Native controls and queue implemented; Arch runtime acceptance remains open |
-| M2 | Persistent movie/series library and optional artwork | SQLite, additive scans, series/seasons, posters and progress implemented; root reconciliation/backdrops/manual candidate picker remain open |
-| M3 | Music, playlists, resume, player tools, settings | Tags, browse, persistent playlists, resume and core tools implemented; queue restoration and full settings remain open |
+| M2 | Persistent movie/series library and optional artwork | SQLite, watched-root reconciliation, series/seasons, posters and progress implemented; native scan qualification, backdrops and manual candidate picker remain open |
+| M3 | Music, playlists, resume, player tools, settings | Tags, browse, persistent playlists/queue, resume, equalizer and expanded tools implemented; integrated native qualification and broader settings remain open |
 | M4 | Tested installation/upgrade packages for all three OS families | Tagged releases build an Arch package with libVLC and full plugin dependencies and Windows/macOS installers with VLC 3.0.24 bundled. Clean-install, upgrade and native playback evidence remains pending; macOS packages are unsigned and not notarized |
 
 A gate closes only with its evidence in [VALIDATION.md](VALIDATION.md). The native application now implements both movies and music. Compilation, a Windows smoke test and development archives do not close the remaining release milestones.
 
-The catalogue below preserves the original acceptance scope. It is not a claim that every task is complete. [ARCHITECTURE.md](ARCHITECTURE.md) describes actual modules and contracts; [UX_PARITY_REVIEW.md](UX_PARITY_REVIEW.md) separates implemented desktop behavior from Android-only and deferred features. Further release work starts with native rendering measurements, then completes persistent root management/settings and installed package qualification.
+The catalogue below preserves the original acceptance scope. It is not a claim that every task is complete. [ARCHITECTURE.md](ARCHITECTURE.md) describes actual modules and contracts; [UX_PARITY_REVIEW.md](UX_PARITY_REVIEW.md) separates implemented desktop behavior from Android-only and deferred features. Remaining release work includes integrated native checks, rendering measurements and installed package qualification.
 
 ## Task catalogue
 

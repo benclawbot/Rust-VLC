@@ -9,6 +9,59 @@ pub enum RepeatMode {
     All,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueCheckpoint {
+    pub entry_ids: Vec<i32>,
+    pub order: Vec<usize>,
+    pub position: Option<usize>,
+    pub wrapped_from_end: bool,
+    pub repeat_mode: RepeatMode,
+    pub shuffle: bool,
+    pub position_ms: i64,
+}
+
+impl Default for QueueCheckpoint {
+    fn default() -> Self {
+        Self {
+            entry_ids: Vec::new(),
+            order: Vec::new(),
+            position: None,
+            wrapped_from_end: false,
+            repeat_mode: RepeatMode::Off,
+            shuffle: false,
+            position_ms: 0,
+        }
+    }
+}
+
+impl QueueCheckpoint {
+    pub fn is_valid(&self) -> bool {
+        if self.position_ms < 0 || self.entry_ids.len() != self.order.len() {
+            return false;
+        }
+        if self.entry_ids.is_empty() {
+            return self.position.is_none() && !self.wrapped_from_end && self.position_ms == 0;
+        }
+        if self
+            .position
+            .is_none_or(|position| position >= self.order.len())
+            || (self.wrapped_from_end
+                && (self.position != Some(0) || self.repeat_mode != RepeatMode::All))
+        {
+            return false;
+        }
+        let mut seen = vec![false; self.entry_ids.len()];
+        self.order.iter().all(|&index| {
+            if index >= seen.len() || seen[index] {
+                false
+            } else {
+                seen[index] = true;
+                true
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlaybackQueue {
     entries: Vec<Track>,
@@ -20,6 +73,33 @@ pub struct PlaybackQueue {
 }
 
 impl PlaybackQueue {
+    pub fn checkpoint(&self, position_ms: i64) -> QueueCheckpoint {
+        QueueCheckpoint {
+            entry_ids: self.entries.iter().map(|track| track.id).collect(),
+            order: self.order.clone(),
+            position: self.position,
+            wrapped_from_end: self.wrapped_from_end,
+            repeat_mode: self.repeat_mode,
+            shuffle: self.shuffle,
+            position_ms: position_ms.max(0),
+        }
+    }
+
+    pub fn restore(&mut self, entries: Vec<Track>, checkpoint: &QueueCheckpoint) -> bool {
+        if !checkpoint.is_valid()
+            || entries.iter().map(|track| track.id).collect::<Vec<_>>() != checkpoint.entry_ids
+        {
+            return false;
+        }
+        self.entries = entries;
+        self.order.clone_from(&checkpoint.order);
+        self.position = checkpoint.position;
+        self.wrapped_from_end = checkpoint.wrapped_from_end;
+        self.repeat_mode = checkpoint.repeat_mode;
+        self.shuffle = checkpoint.shuffle;
+        true
+    }
+
     pub fn replace(&mut self, entries: Vec<Track>, start_index: usize) -> bool {
         if entries.is_empty() || start_index >= entries.len() {
             self.entries.clear();
@@ -298,6 +378,7 @@ mod tests {
 
     fn track(id: i32) -> Track {
         Track {
+            source: crate::model::TrackSource::Local,
             id,
             path: PathBuf::from(format!("track-{id}.mp3")),
             title: format!("Track {id}"),
@@ -307,6 +388,7 @@ mod tests {
 
     fn duplicate_track(title: &str) -> Track {
         Track {
+            source: crate::model::TrackSource::Local,
             id: 7,
             path: PathBuf::from(format!("{title}.mp3")),
             title: title.to_owned(),
@@ -514,5 +596,47 @@ mod tests {
             original_entries[first_next_index].id
         );
         assert_eq!(queue.current_index(), Some(first_next_index));
+    }
+
+    #[test]
+    fn checkpoint_restores_duplicate_occurrences_shuffle_order_current_and_wrap_state() {
+        let entries = vec![track(1), track(2), track(1)];
+        let mut queue = PlaybackQueue::default();
+        assert!(queue.replace(entries.clone(), 2));
+        queue.order = vec![2, 0, 1];
+        queue.position = Some(0);
+        queue.shuffle = true;
+        queue.set_repeat(RepeatMode::All);
+        queue.wrapped_from_end = true;
+
+        let checkpoint = queue.checkpoint(12_345);
+        let mut restored = PlaybackQueue::default();
+
+        assert!(restored.restore(entries, &checkpoint));
+        assert_eq!(restored.checkpoint(12_345), checkpoint);
+        assert_eq!(restored.current_index(), Some(2));
+        assert_eq!(restored.current().unwrap().id, 1);
+        assert_eq!(restored.previous().unwrap().id, 2);
+        assert_eq!(checkpoint.position_ms, 12_345);
+    }
+
+    #[test]
+    fn restore_rejects_invalid_order_position_and_mismatched_entries() {
+        let entries = vec![track(1), track(2)];
+        let mut queue = PlaybackQueue::default();
+        assert!(queue.replace(vec![track(9)], 0));
+        let mut checkpoint = queue.checkpoint(0);
+        checkpoint.entry_ids = vec![1, 2];
+        checkpoint.order = vec![0, 0];
+        checkpoint.position = Some(0);
+        assert!(!queue.restore(entries.clone(), &checkpoint));
+        assert_eq!(queue.current().unwrap().id, 9);
+
+        checkpoint.order = vec![0, 1];
+        checkpoint.position = Some(2);
+        assert!(!queue.restore(entries.clone(), &checkpoint));
+        checkpoint.position = Some(1);
+        assert!(!queue.restore(vec![track(2), track(1)], &checkpoint));
+        assert_eq!(queue.current().unwrap().id, 9);
     }
 }

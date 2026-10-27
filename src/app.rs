@@ -1,37 +1,47 @@
 use crate::browse::{self, MusicGroup};
 use crate::library::TrackSelection;
 use crate::library_worker::{LibraryEvent, LibraryJob, LibraryWorker};
+use crate::media_controls::{MediaControlBridge, MediaControlIntent};
 use crate::metadata::{ArtworkKind, ArtworkRequest, LocalMetadata};
-use crate::model::{readable_filename, MediaDetails, Track, TrackId};
+use crate::model::{readable_filename, MediaDetails, NetworkUrl, Track, TrackId, TrackSource};
 use crate::playback::frame::FrameMailbox;
-use crate::playback::queue::RepeatMode;
+use crate::playback::queue::{QueueCheckpoint, RepeatMode};
 use crate::playback::{
-    send_command, PlaybackCommand, PlaybackSnapshot, PlaybackUiState, PlaybackWorker,
-    MAX_MEDIA_DELAY_US, MAX_PLAYBACK_RATE, MAX_VOLUME_PERCENT, MIN_PLAYBACK_RATE,
+    send_command, AbPoint, EqualizerSettings, PlaybackCommand, PlaybackSnapshot, PlaybackUiState,
+    PlaybackWorker, MAX_MEDIA_DELAY_US, MAX_PLAYBACK_RATE, MAX_VOLUME_PERCENT, MIN_PLAYBACK_RATE,
     MIN_VOLUME_PERCENT, MOVIE_FORMAT,
 };
 use crate::playlists::{PlaylistCollection, PlaylistId};
 use crate::scan::ScanOutcome;
 use crate::series::episode_info;
-use crate::storage::{self, LibraryData, Progress, StorageWorker};
-use crate::{AppWindow, BrowseRow, QueueRow, TrackChoice, TrackRow};
+use crate::storage::{self, Bookmark, LibraryData, NetworkHistoryEntry, Progress, StorageWorker};
+use crate::{
+    AppWindow, BrowseRow, PictureInPictureWindow, QueueRow, TrackChoice, TrackRow, WatchedRootRow,
+};
 use rfd::FileDialog;
 use slint::{
-    ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer,
-    TimerMode, VecModel,
+    CloseRequestResponse, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer,
+    SharedString, Timer, TimerMode, VecModel,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{mpsc::SyncSender, Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TRANSPORT_DEBOUNCE: Duration = Duration::from_millis(220);
 const TRANSPORT_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+const FULLSCREEN_CONTROLS_TIMEOUT: Duration = Duration::from_millis(2200);
 const MUSIC_PAGE_SIZE: usize = 50;
 const CARD_PAGE_SIZE: usize = 24;
 const METADATA_BATCH_SIZE: usize = 32;
+const MEDIA_CONTROL_HANDLE_RETRIES: u8 = 12;
+const MAX_BOOKMARK_NAME_BYTES: usize = 128;
+const MAX_NETWORK_HISTORY_TITLE_BYTES: usize = 256;
+type PathIdentityKey = Vec<OsString>;
 const PROGRESS_SAVE_INTERVAL: Duration = Duration::from_secs(5);
 const MOVIE_DETAILS_CLICK_DELAY: Duration = Duration::from_millis(520);
 
@@ -49,6 +59,20 @@ struct PendingValue<T> {
     changed_at: Instant,
     request_id: Option<u64>,
     submitted_at: Option<Instant>,
+}
+
+#[derive(Clone, Debug)]
+struct DisplayedVideoFrame {
+    width: u32,
+    height: u32,
+    rgba: Arc<[u8]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingSubtitleRequest {
+    request_id: u64,
+    media_id: TrackId,
+    load_generation: u64,
 }
 
 struct AppState {
@@ -79,6 +103,7 @@ struct AppState {
     movie_sort: String,
     music_genre: String,
     music_sort: String,
+    music_sort_explicit: bool,
     movie_details_open: bool,
     selected_movie: Option<TrackId>,
     pending_movie_details: Option<(TrackId, Instant)>,
@@ -89,6 +114,7 @@ struct AppState {
     settings_error: bool,
     audio_delay_input: String,
     subtitle_delay_input: String,
+    fullscreen_activity_at: Option<Instant>,
     jump_time_input: String,
     video_fill: bool,
     page_index: usize,
@@ -97,6 +123,35 @@ struct AppState {
     next_id: TrackId,
     feedback: String,
     library_status: String,
+    watched_roots: Vec<PathBuf>,
+    root_scan_status: HashMap<PathIdentityKey, String>,
+    pending_root_scans: VecDeque<PathBuf>,
+    active_root_scan: Option<PathBuf>,
+    last_scheduled_root_scan: Instant,
+    unavailable_media: HashSet<TrackId>,
+    file_fingerprints: HashMap<PathIdentityKey, crate::scan::FileFingerprint>,
+    playlist_io_status: String,
+    queue_checkpoint: QueueCheckpoint,
+    queue_restore_pending: bool,
+    bookmarks: Vec<Bookmark>,
+    network_history: Vec<NetworkHistoryEntry>,
+    subtitle_results: Vec<crate::subtitles::SubtitleSearchResult>,
+    subtitle_search_pending: Option<PendingSubtitleRequest>,
+    subtitle_download_pending: Option<PendingSubtitleRequest>,
+    subtitle_search_status: String,
+    subtitle_language_input: String,
+    next_subtitle_request_id: u64,
+    equalizer_settings: EqualizerSettings,
+    equalizer_settings_pending: bool,
+    equalizer_pending_preset: Option<usize>,
+    equalizer_restore_pending: bool,
+    equalizer_editing: bool,
+    equalizer_restore_sent_at: Option<Instant>,
+    equalizer_restore_fallback: bool,
+    equalizer_restore_failed: bool,
+    bookmark_name_input: String,
+    network_url_input: String,
+    cast_address_input: String,
     storage: Option<StorageWorker>,
     library_worker: Option<LibraryWorker>,
     pending_metadata: VecDeque<TrackId>,
@@ -122,12 +177,22 @@ struct AppState {
     subtitle_model: Rc<VecModel<TrackChoice>>,
     chapter_model: Rc<VecModel<TrackChoice>>,
     queue_model: Rc<VecModel<QueueRow>>,
+    watched_roots_model: Rc<VecModel<WatchedRootRow>>,
+    equalizer_band_model: Rc<VecModel<crate::EqualizerBandRow>>,
+    equalizer_preset_model: Rc<VecModel<SharedString>>,
     playlist_targets_model: Rc<VecModel<SharedString>>,
     movie_genres_model: Rc<VecModel<SharedString>>,
     music_genres_model: Rc<VecModel<SharedString>>,
     rendered_queue_revision: u64,
     last_current_id: Option<TrackId>,
     last_current_load_generation: u64,
+    last_network_history_key: Option<(TrackId, u64)>,
+    bookmark_model: Rc<VecModel<crate::BookmarkRow>>,
+    network_history_model: Rc<VecModel<crate::NetworkHistoryRow>>,
+    subtitle_result_model: Rc<VecModel<crate::SubtitleResultRow>>,
+    opensubtitles_credentials_available: bool,
+    opensubtitles_status: String,
+    media_controls_status: String,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +231,7 @@ impl Default for AppState {
             movie_sort: "recent".to_owned(),
             music_genre: "All genres".to_owned(),
             music_sort: "recent".to_owned(),
+            music_sort_explicit: false,
             movie_details_open: false,
             selected_movie: None,
             pending_movie_details: None,
@@ -176,6 +242,7 @@ impl Default for AppState {
             settings_error: false,
             audio_delay_input: "0".to_owned(),
             subtitle_delay_input: "0".to_owned(),
+            fullscreen_activity_at: None,
             jump_time_input: String::new(),
             video_fill: false,
             page_index: 0,
@@ -184,6 +251,35 @@ impl Default for AppState {
             next_id: 1,
             feedback: String::new(),
             library_status: String::new(),
+            watched_roots: Vec::new(),
+            root_scan_status: HashMap::new(),
+            pending_root_scans: VecDeque::new(),
+            active_root_scan: None,
+            last_scheduled_root_scan: Instant::now(),
+            unavailable_media: HashSet::new(),
+            file_fingerprints: HashMap::new(),
+            playlist_io_status: String::new(),
+            queue_checkpoint: QueueCheckpoint::default(),
+            queue_restore_pending: false,
+            bookmarks: Vec::new(),
+            network_history: Vec::new(),
+            subtitle_results: Vec::new(),
+            subtitle_search_pending: None,
+            subtitle_download_pending: None,
+            subtitle_search_status: String::new(),
+            subtitle_language_input: "en".into(),
+            next_subtitle_request_id: 1,
+            equalizer_settings: EqualizerSettings::default(),
+            equalizer_settings_pending: false,
+            equalizer_pending_preset: None,
+            equalizer_restore_pending: false,
+            equalizer_editing: false,
+            equalizer_restore_sent_at: None,
+            equalizer_restore_fallback: false,
+            equalizer_restore_failed: false,
+            bookmark_name_input: String::new(),
+            network_url_input: String::new(),
+            cast_address_input: String::new(),
             storage: None,
             library_worker: None,
             pending_metadata: VecDeque::new(),
@@ -209,12 +305,22 @@ impl Default for AppState {
             subtitle_model: Rc::new(VecModel::default()),
             chapter_model: Rc::new(VecModel::default()),
             queue_model: Rc::new(VecModel::default()),
+            watched_roots_model: Rc::new(VecModel::default()),
+            equalizer_band_model: Rc::new(VecModel::default()),
+            equalizer_preset_model: Rc::new(VecModel::default()),
             playlist_targets_model: Rc::new(VecModel::default()),
             movie_genres_model: Rc::new(VecModel::default()),
             music_genres_model: Rc::new(VecModel::default()),
             rendered_queue_revision: u64::MAX,
             last_current_id: None,
             last_current_load_generation: 0,
+            last_network_history_key: None,
+            bookmark_model: Rc::new(VecModel::default()),
+            network_history_model: Rc::new(VecModel::default()),
+            subtitle_result_model: Rc::new(VecModel::default()),
+            opensubtitles_credentials_available: false,
+            opensubtitles_status: String::new(),
+            media_controls_status: "Waiting for the app window to start.".into(),
         }
     }
 }
@@ -232,7 +338,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let command_sender = playback_worker.command_sender();
     let snapshot = playback_worker.shared_snapshot();
     let video_frames = playback_worker.video_frames();
-    let (app_state, startup_metadata) = load_app_state();
+    let (mut app_state, startup_metadata) = load_app_state();
+    app_state.queue_restore_pending = true;
+    submit_queue_restore(&mut app_state, &command_sender, &snapshot);
+    let startup_equalizer_settings = app_state.equalizer_settings;
+    app_state.equalizer_settings_pending = true;
+    app_state.equalizer_restore_pending = true;
     let state = Rc::new(RefCell::new(app_state));
 
     {
@@ -245,6 +356,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_subtitle_tracks(ModelRc::from(Rc::clone(&state.subtitle_model)));
         ui.set_chapters(ModelRc::from(Rc::clone(&state.chapter_model)));
         ui.set_queue_rows(ModelRc::from(Rc::clone(&state.queue_model)));
+        ui.set_watched_roots(ModelRc::from(Rc::clone(&state.watched_roots_model)));
         ui.set_playlist_targets(ModelRc::from(Rc::clone(&state.playlist_targets_model)));
     }
     ui.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
@@ -275,45 +387,123 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     drop(initial);
+    {
+        let mut app_state = state.borrow_mut();
+        app_state.equalizer_settings = startup_equalizer_settings;
+        submit_equalizer_restore(&mut app_state, &command_sender, &snapshot);
+    }
 
     refresh_from_state(&ui.as_weak(), &state, &snapshot);
     wire_library_ui(&ui, &state, &command_sender, &snapshot);
+    wire_playlist_io(&ui, &state, &snapshot);
+    let picture_in_picture = Rc::new(RefCell::new(None));
+    let displayed_video_frame = Rc::new(RefCell::new(None));
+    wire_picture_in_picture(
+        &ui,
+        &state,
+        &snapshot,
+        &picture_in_picture,
+        &displayed_video_frame,
+    );
+    wire_extended_tools(&ui, &state, &command_sender, &snapshot);
     register_transport(&ui, &state, &command_sender, &snapshot);
 
     let weak = ui.as_weak();
     let state_timer = Rc::clone(&state);
     let sender_timer = command_sender.clone();
     let snapshot_timer = Arc::clone(&snapshot);
+    let media_controls = Rc::new(RefCell::new(None::<MediaControlBridge>));
+    let media_controls_attempts = Rc::new(Cell::new(0));
+    let media_controls_timer = Rc::clone(&media_controls);
+    let media_controls_attempts_timer = Rc::clone(&media_controls_attempts);
+    let state_for_media_controls = Rc::clone(&state_timer);
+    let sender_for_media_controls = sender_timer.clone();
+    let snapshot_for_media_controls = Arc::clone(&snapshot_timer);
     let last_save = Rc::new(Cell::new(Instant::now()));
     let last_save_timer = Rc::clone(&last_save);
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, Duration::from_millis(180), move || {
         if let Some(ui) = weak.upgrade() {
+            initialize_media_controls(
+                &ui,
+                &state_for_media_controls,
+                &media_controls_timer,
+                &media_controls_attempts_timer,
+            );
+            let intents = media_controls_timer
+                .borrow()
+                .as_ref()
+                .map(MediaControlBridge::drain_events)
+                .unwrap_or_default();
+            apply_media_control_intents(
+                &ui,
+                &state_for_media_controls,
+                &sender_for_media_controls,
+                &snapshot_for_media_controls,
+                intents,
+            );
             let playback = read_snapshot(&snapshot_timer);
-            let mut state = state_timer.borrow_mut();
-            flush_pending_transport(&ui, &mut state, &sender_timer, &snapshot_timer);
-            process_library_events(&mut state);
-            flush_pending_metadata(&mut state);
-            schedule_automatic_artwork(&mut state);
-            update_progress(&mut state, &playback);
-            if last_save_timer.get().elapsed() >= PROGRESS_SAVE_INTERVAL {
-                persist_library(&mut state);
-                last_save_timer.set(Instant::now());
+            {
+                let mut state = state_timer.borrow_mut();
+                submit_queue_restore(&mut state, &sender_timer, &snapshot_timer);
+                submit_equalizer_restore(&mut state, &sender_timer, &snapshot_timer);
+                flush_pending_transport(&ui, &mut state, &sender_timer, &snapshot_timer);
+                process_library_events(&mut state, &playback, &sender_timer, &snapshot_timer);
+                flush_pending_metadata(&mut state);
+                schedule_automatic_artwork(&mut state);
+                schedule_periodic_root_scans(&mut state);
+                flush_pending_root_scans(&mut state);
+                update_progress(&mut state, &playback);
+                let equalizer_changed = reconcile_equalizer_settings(&mut state, &playback);
+                let network_history_changed = update_network_history(&mut state, &playback);
+                let periodic_save_due = last_save_timer.get().elapsed() >= PROGRESS_SAVE_INTERVAL;
+                let queue_changed =
+                    update_queue_checkpoint(&mut state, &playback, periodic_save_due);
+                if periodic_save_due
+                    || queue_changed
+                    || equalizer_changed
+                    || network_history_changed
+                {
+                    persist_library(&mut state);
+                    last_save_timer.set(Instant::now());
+                }
+                if let Some(storage) = state.storage.as_ref() {
+                    if let Some(error) = storage.take_error() {
+                        state.library_status = format!("Library save failed: {error}");
+                        state.feedback =
+                            "The library could not be saved. Changes remain in memory.".into();
+                    }
+                }
+                refresh_ui(&ui, &mut state, &playback);
             }
-            if let Some(storage) = state.storage.as_ref() {
-                if let Some(error) = storage.take_error() {
-                    state.library_status = format!("Library save failed: {error}");
-                    state.feedback =
-                        "The library could not be saved. Changes remain in memory.".into();
+
+            let playback = read_snapshot(&snapshot_timer);
+            let details = playback
+                .current_id
+                .and_then(|id| state_timer.borrow().details.get(&id).cloned());
+            let artwork = details.as_ref().and_then(|details| details.artwork.clone());
+            let mut media_controls = media_controls_timer.borrow_mut();
+            if let Some(bridge) = media_controls.as_mut() {
+                if let Err(error) = bridge.update(&playback, details.as_ref(), artwork.as_deref())
+                {
+                    let status = format!(
+                        "OS media controls could not be updated: {error}. Local playback remains available."
+                    );
+                    let mut state = state_timer.borrow_mut();
+                    if state.media_controls_status != status {
+                        state.media_controls_status = status.clone();
+                        ui.set_media_controls_status(SharedString::from(status));
+                    }
                 }
             }
-            refresh_ui(&ui, &mut state, &playback);
         }
     });
 
     let video_weak = ui.as_weak();
     let frames_timer = Arc::clone(&video_frames);
     let video_snapshot = Arc::clone(&snapshot);
+    let picture_in_picture_timer = Rc::clone(&picture_in_picture);
+    let displayed_video_frame_timer = Rc::clone(&displayed_video_frame);
     let displayed_generation = Rc::new(Cell::new(video_frames.generation()));
     let frame_timer = Timer::default();
     frame_timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
@@ -323,7 +513,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &ui,
                 &frames_timer,
                 &displayed_generation,
-                playback.current_is_video,
+                &playback,
+                &picture_in_picture_timer,
+                &displayed_video_frame_timer,
             );
         }
     });
@@ -331,11 +523,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let result = ui.run();
     timer.stop();
     frame_timer.stop();
+    if let Some(picture_in_picture) = picture_in_picture.borrow().as_ref() {
+        let _ = picture_in_picture.hide();
+    }
     let storage_error = {
         let mut state = state.borrow_mut();
         let playback = read_snapshot(&snapshot);
-        process_library_events(&mut state);
+        process_library_events(&mut state, &playback, &command_sender, &snapshot);
         update_progress(&mut state, &playback);
+        update_queue_checkpoint(&mut state, &playback, true);
         persist_library(&mut state);
         if let Some(mut worker) = state.library_worker.take() {
             worker.shutdown();
@@ -355,6 +551,191 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn initialize_media_controls(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    bridge: &Rc<RefCell<Option<MediaControlBridge>>>,
+    attempts: &Cell<u8>,
+) {
+    if bridge.borrow().is_some() || attempts.get() >= MEDIA_CONTROL_HANDLE_RETRIES {
+        return;
+    }
+    let attempt = attempts.get().saturating_add(1);
+    attempts.set(attempt);
+    match MediaControlBridge::new(ui.window()) {
+        Ok(controls) => {
+            *bridge.borrow_mut() = Some(controls);
+            set_media_controls_status(ui, state, "OS media controls are active.".into());
+        }
+        Err(error)
+            if error.contains("window handle is not available yet")
+                && attempt < MEDIA_CONTROL_HANDLE_RETRIES =>
+        {
+            set_media_controls_status(ui, state, "Waiting for the app window to start.".into());
+        }
+        Err(error) => {
+            attempts.set(MEDIA_CONTROL_HANDLE_RETRIES);
+            set_media_controls_status(
+                ui,
+                state,
+                format!(
+                    "OS media controls are unavailable: {error}. Local playback remains available."
+                ),
+            );
+        }
+    }
+}
+
+fn set_media_controls_status(ui: &AppWindow, state: &Rc<RefCell<AppState>>, status: String) {
+    let mut state = state.borrow_mut();
+    if state.media_controls_status != status {
+        state.media_controls_status = status.clone();
+        ui.set_media_controls_status(SharedString::from(status));
+    }
+}
+
+fn apply_media_control_intents(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    intents: Vec<MediaControlIntent>,
+) {
+    for intent in intents {
+        match intent {
+            MediaControlIntent::Play => {
+                set_media_controls_paused(ui, state, sender, snapshot, false);
+            }
+            MediaControlIntent::Pause => {
+                set_media_controls_paused(ui, state, sender, snapshot, true);
+            }
+            MediaControlIntent::Toggle => {
+                if can_toggle_pause(&read_snapshot(snapshot)) {
+                    ui.invoke_toggle_pause();
+                }
+            }
+            MediaControlIntent::Stop => {
+                let initial = read_snapshot(snapshot);
+                if media_control_transport_is_current(snapshot, &initial) {
+                    ui.invoke_stop();
+                }
+            }
+            MediaControlIntent::Next => {
+                let initial = read_snapshot(snapshot);
+                if media_control_transport_is_current(snapshot, &initial) {
+                    ui.invoke_next();
+                }
+            }
+            MediaControlIntent::Previous => {
+                let initial = read_snapshot(snapshot);
+                if media_control_transport_is_current(snapshot, &initial) {
+                    ui.invoke_previous();
+                }
+            }
+            MediaControlIntent::SeekRelative(offset_ms) => {
+                seek_from_media_controls(ui, snapshot, None, offset_ms);
+            }
+            MediaControlIntent::SeekTo(position_ms) => {
+                seek_from_media_controls(ui, snapshot, Some(position_ms), 0);
+            }
+            MediaControlIntent::SetVolume(volume) => {
+                ui.invoke_volume_changed(volume.clamp(0, 100) as f32, true);
+            }
+        }
+    }
+}
+
+fn set_media_controls_paused(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    paused: bool,
+) {
+    let observed = read_snapshot(snapshot);
+    if !media_control_pause_change_needed(&observed, paused) {
+        return;
+    }
+    let playback = read_snapshot(snapshot);
+    if !media_control_snapshot_matches(&observed, &playback)
+        || !media_control_pause_change_needed(&playback, paused)
+    {
+        return;
+    }
+
+    let mut state = state.borrow_mut();
+    update_progress(&mut state, &playback);
+    submit_transport_command(
+        &mut state,
+        sender,
+        snapshot,
+        PlaybackCommand::SetPaused { paused },
+    );
+    persist_library(&mut state);
+    refresh_from_parts(&ui.as_weak(), &mut state, snapshot);
+}
+
+fn media_control_pause_change_needed(playback: &PlaybackSnapshot, _paused: bool) -> bool {
+    playback.queue_len > 0
+        && match playback.state {
+            PlaybackUiState::Loading | PlaybackUiState::Playing | PlaybackUiState::Paused => true,
+            PlaybackUiState::Idle | PlaybackUiState::Ended => true,
+            PlaybackUiState::Error | PlaybackUiState::Unavailable => false,
+        }
+}
+
+fn media_control_snapshot_matches(observed: &PlaybackSnapshot, current: &PlaybackSnapshot) -> bool {
+    observed.current_id == current.current_id
+        && observed.load_generation == current.load_generation
+        && observed.queue_revision == current.queue_revision
+        && observed.queue_len == current.queue_len
+}
+
+fn media_control_transport_is_current(
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    observed: &PlaybackSnapshot,
+) -> bool {
+    let current = read_snapshot(snapshot);
+    media_control_snapshot_matches(observed, &current)
+        && current.current_id.is_some()
+        && current.queue_len > 0
+        && matches!(
+            current.state,
+            PlaybackUiState::Loading
+                | PlaybackUiState::Playing
+                | PlaybackUiState::Paused
+                | PlaybackUiState::Ended
+        )
+}
+
+fn seek_from_media_controls(
+    ui: &AppWindow,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    absolute_position_ms: Option<i64>,
+    relative_offset_ms: i64,
+) {
+    let observed = read_snapshot(snapshot);
+    let Some(track_id) = observed
+        .current_id
+        .filter(|_| playback_is_seekable(&observed))
+    else {
+        return;
+    };
+    let current = read_snapshot(snapshot);
+    if !media_control_snapshot_matches(&observed, &current) || !playback_is_seekable(&current) {
+        return;
+    }
+    let position_ms = absolute_position_ms
+        .unwrap_or_else(|| current.position_ms.saturating_add(relative_offset_ms))
+        .clamp(0, current.duration_ms);
+    ui.invoke_seek_changed(
+        position_ms as f32,
+        track_id,
+        SharedString::from(current.load_generation.to_string()),
+        true,
+    );
+}
+
 fn load_app_state() -> (AppState, Vec<TrackId>) {
     let mut state = AppState::default();
     match crate::credentials::has_tmdb_token() {
@@ -369,6 +750,21 @@ fn load_app_state() -> (AppState, Vec<TrackId>) {
         Err(error) => {
             state.settings_error = true;
             state.settings_status = format!("Could not check the saved TMDB token: {error}");
+        }
+    }
+    match crate::credentials::has_opensubtitles_credentials() {
+        Ok(saved) => {
+            state.opensubtitles_credentials_available = saved;
+            state.opensubtitles_status = if saved {
+                "OpenSubtitles credentials are stored securely. Enter new values to replace them."
+                    .into()
+            } else {
+                "Add an OpenSubtitles API key to search, and a bearer token to download.".into()
+            };
+        }
+        Err(error) => {
+            state.opensubtitles_status =
+                format!("Could not check OpenSubtitles credentials: {error}");
         }
     }
     let mut loaded = LibraryData::default();
@@ -413,6 +809,17 @@ fn load_app_state() -> (AppState, Vec<TrackId>) {
         .map(|progress| (progress.media_id, progress))
         .collect();
     state.details = loaded.details.into_iter().collect();
+    state.watched_roots = loaded.watched_roots;
+    state.queue_checkpoint = loaded.queue_checkpoint;
+    state.bookmarks = loaded.bookmarks;
+    state.network_history = loaded.network_history;
+    state.equalizer_settings = loaded.equalizer_settings;
+    for root in &state.watched_roots {
+        state
+            .root_scan_status
+            .insert(path_identity_key(root), "Queued".into());
+        state.pending_root_scans.push_back(root.clone());
+    }
     state.next_id = state
         .tracks
         .iter()
@@ -426,6 +833,7 @@ fn load_app_state() -> (AppState, Vec<TrackId>) {
         .tracks
         .iter()
         .chain(&state.movies)
+        .filter(|track| track.source == TrackSource::Local)
         .map(|track| track.id)
         .collect();
     if let Ok(worker) = LibraryWorker::spawn(state.cache_dir.clone()) {
@@ -434,6 +842,10 @@ fn load_app_state() -> (AppState, Vec<TrackId>) {
         state
             .library_status
             .push_str(" Artwork and folder scanning are unavailable.");
+        for status in state.root_scan_status.values_mut() {
+            *status = "Scanning unavailable".into();
+        }
+        state.pending_root_scans.clear();
     }
     (state, metadata)
 }
@@ -550,6 +962,10 @@ fn wire_library_ui(
         ui.on_music_section_changed(move |section| {
             let mut state = state.borrow_mut();
             state.music_section = section.to_string();
+            if section == "albums" || state.music_sort == "album" {
+                state.music_sort = "recent".into();
+                state.music_sort_explicit = false;
+            }
             state.open_music_group = None;
             state.opened_playlist = None;
             state.playlist_rename_input.clear();
@@ -564,6 +980,10 @@ fn wire_library_ui(
         let snapshot = Arc::clone(snapshot);
         ui.on_back_music_detail(move || {
             let mut state = state.borrow_mut();
+            if state.music_sort == "album" {
+                state.music_sort = "recent".into();
+                state.music_sort_explicit = false;
+            }
             state.open_music_group = None;
             state.opened_playlist = None;
             state.playlist_rename_input.clear();
@@ -577,6 +997,10 @@ fn wire_library_ui(
         let snapshot = Arc::clone(snapshot);
         ui.on_open_music_group(move |id| {
             let mut state = state.borrow_mut();
+            if state.music_section == "albums" {
+                state.music_sort = "recent".into();
+                state.music_sort_explicit = false;
+            }
             state.open_music_group = Some(id);
             state.artwork_target = Some(id);
             state.page_index = 0;
@@ -1038,7 +1462,9 @@ fn wire_library_ui(
             let queue = music_collection(&state);
             let start = collection_start_index(&queue, id, index);
             if let Some(start) = start {
-                play_collection(&mut state, &sender, &snapshot, queue, start, None);
+                play_collection_and_enter_video(
+                    &weak, &mut state, &sender, &snapshot, queue, start, None,
+                );
                 state.artwork_target = Some(id);
             } else {
                 state.feedback = "That track is no longer in the displayed collection.".into();
@@ -1085,7 +1511,9 @@ fn wire_library_ui(
             if queue.is_empty() {
                 state.feedback = "Check one or more rows on this page first.".into();
             } else {
-                play_collection(&mut state, &sender, &snapshot, queue, 0, None);
+                play_collection_and_enter_video(
+                    &weak, &mut state, &sender, &snapshot, queue, 0, None,
+                );
             }
             refresh_from_parts(&weak, &mut state, &snapshot);
         });
@@ -1101,7 +1529,9 @@ fn wire_library_ui(
             if queue.is_empty() {
                 state.feedback = "There are no tracks in this collection.".into();
             } else {
-                play_collection(&mut state, &sender, &snapshot, queue, 0, None);
+                play_collection_and_enter_video(
+                    &weak, &mut state, &sender, &snapshot, queue, 0, None,
+                );
             }
             refresh_from_parts(&weak, &mut state, &snapshot);
         });
@@ -1184,10 +1614,60 @@ fn wire_library_ui(
         ui.on_import_folder(move || {
             if let Some(root) = FileDialog::new().pick_folder() {
                 let mut state = state.borrow_mut();
-                let result = state.library_worker.as_ref().ok_or_else(|| "Folder scanning is unavailable because the metadata worker could not start.".to_owned()).and_then(|worker| worker.submit(LibraryJob::Scan(root)));
-                state.feedback = result.err().unwrap_or_else(|| "Scanning the selected folder in the background…".into());
+                let feedback = match add_watched_root(&mut state, root) {
+                    Ok(true) => "Folder added to the library and scan queued.".into(),
+                    Ok(false) => "Folder is already watched; a scan is queued.".into(),
+                    Err(error) => error,
+                };
+                state.feedback = feedback;
                 refresh_from_parts(&weak, &mut state, &snapshot);
             }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_add_watched_root(move || {
+            if let Some(root) = FileDialog::new().pick_folder() {
+                let mut state = state.borrow_mut();
+                let feedback = match add_watched_root(&mut state, root) {
+                    Ok(true) => "Folder added to the library and scan queued.".into(),
+                    Ok(false) => "Folder is already watched; a scan is queued.".into(),
+                    Err(error) => error,
+                };
+                state.feedback = feedback;
+                refresh_from_parts(&weak, &mut state, &snapshot);
+            }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_rescan_watched_roots(move || {
+            let mut state = state.borrow_mut();
+            let roots = state.watched_roots.clone();
+            for root in roots {
+                queue_root_scan(&mut state, root);
+            }
+            state.feedback = "Rescan queued for all watched folders.".into();
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_remove_watched_root(move |index| {
+            let mut state = state.borrow_mut();
+            if let Ok(index) = usize::try_from(index) {
+                if remove_watched_root(&mut state, index).is_some() {
+                    state.feedback =
+                        "Folder removed from watching. Imported media and history remain.".into();
+                }
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
         });
     }
     {
@@ -1268,6 +1748,7 @@ fn wire_library_ui(
         ui.on_music_sort_changed(move |sort| {
             let mut state = state.borrow_mut();
             state.music_sort = music_sort_key(sort.as_str()).into();
+            state.music_sort_explicit = true;
             state.page_index = 0;
             refresh_from_parts(&weak, &mut state, &snapshot);
         });
@@ -1333,6 +1814,7 @@ fn wire_library_ui(
             state.query.clear();
             state.music_genre = "All genres".into();
             state.music_sort = "recent".into();
+            state.music_sort_explicit = false;
             state.page_index = 0;
             refresh_from_parts(&weak, &mut state, &snapshot);
         });
@@ -1466,15 +1948,10 @@ fn wire_library_ui(
                 state.selected_movie = Some(id);
                 state.movie_details_open = false;
                 state.artwork_target = Some(id);
-                let queued =
-                    play_collection(&mut state, &sender, &snapshot, queue, index, resume_at);
+                play_collection_and_enter_video(
+                    &weak, &mut state, &sender, &snapshot, queue, index, resume_at,
+                );
                 state.current_view = "movies".into();
-                if queued {
-                    if let Some(ui) = weak.upgrade() {
-                        ui.set_movie_fullscreen(true);
-                        ui.window().set_fullscreen(true);
-                    }
-                }
             } else {
                 state.feedback =
                     "That movie is no longer in the current filtered collection.".into();
@@ -1489,6 +1966,27 @@ fn wire_library_ui(
                 ui.set_movie_fullscreen(false);
                 ui.window().set_fullscreen(false);
             }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_return_to_video(move || {
+            if !can_return_to_video(&read_snapshot(&snapshot)) {
+                return;
+            }
+            if let Some(ui) = weak.upgrade() {
+                state.borrow_mut().fullscreen_activity_at = Some(Instant::now());
+                ui.set_movie_fullscreen(true);
+                ui.window().set_fullscreen(true);
+            }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_fullscreen_activity(move || {
+            state.borrow_mut().fullscreen_activity_at = Some(Instant::now());
         });
     }
 
@@ -1697,6 +2195,12 @@ fn wire_library_ui(
     }
     {
         let state = Rc::clone(app_state);
+        ui.on_audio_delay_draft_changed(move |value| {
+            state.borrow_mut().audio_delay_input = value.to_string();
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
         let sender = sender.clone();
         let weak = ui.as_weak();
         let snapshot = Arc::clone(snapshot);
@@ -1726,6 +2230,12 @@ fn wire_library_ui(
                 state.feedback = "Enter milliseconds from −60000 to +60000.".into();
             }
             refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_subtitle_delay_draft_changed(move |value| {
+            state.borrow_mut().subtitle_delay_input = value.to_string();
         });
     }
     {
@@ -1952,7 +2462,9 @@ fn find_track(state: &AppState, id: TrackId) -> Option<&Track> {
 }
 
 fn track_path(state: &AppState, id: TrackId) -> Option<PathBuf> {
-    find_track(state, id).map(|track| track.path.clone())
+    find_track(state, id)
+        .filter(|track| track.source == TrackSource::Local)
+        .map(|track| track.path.clone())
 }
 
 fn add_paths(
@@ -1963,14 +2475,21 @@ fn add_paths(
     let mut added = 0;
     let mut metadata_ids = Vec::new();
     let mut metadata_available = true;
+    let mut known_paths = state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .filter(|track| track.source == TrackSource::Local)
+        .map(|track| path_identity_key(&track.path))
+        .collect::<HashSet<_>>();
     for selected in paths {
+        let requested_identity = path_identity_key(&selected);
+        if known_paths.contains(&requested_identity) {
+            continue;
+        }
         let path = std::fs::canonicalize(&selected).unwrap_or(selected);
-        if state
-            .tracks
-            .iter()
-            .chain(&state.movies)
-            .any(|track| track.path == path)
-        {
+        let identity = path_identity_key(&path);
+        if known_paths.contains(&identity) {
             continue;
         }
         let video = force_video.unwrap_or_else(|| is_movie_path(&path));
@@ -1991,6 +2510,8 @@ fn add_paths(
             } else {
                 state.tracks.push(track);
             }
+            known_paths.insert(requested_identity);
+            known_paths.insert(identity);
             metadata_ids.push(id);
             state.next_id = id + 1;
             added += 1;
@@ -2044,6 +2565,1205 @@ fn flush_pending_metadata(state: &mut AppState) -> bool {
     }
 }
 
+fn wire_picture_in_picture(
+    ui: &AppWindow,
+    app_state: &Rc<RefCell<AppState>>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    picture_in_picture: &Rc<RefCell<Option<PictureInPictureWindow>>>,
+    displayed_frame: &Rc<RefCell<Option<DisplayedVideoFrame>>>,
+) {
+    {
+        let app_state = Rc::clone(app_state);
+        let picture_in_picture = Rc::clone(picture_in_picture);
+        let displayed_frame = Rc::clone(displayed_frame);
+        let snapshot = Arc::clone(snapshot);
+        let weak_main = ui.as_weak();
+        let return_to_fullscreen = Rc::new(Cell::new(false));
+        let return_to_fullscreen_open = Rc::clone(&return_to_fullscreen);
+        ui.on_open_picture_in_picture(move || {
+            let playback = read_snapshot(&snapshot);
+            let Some(_) = displayed_frame.borrow().as_ref() else {
+                let mut state = app_state.borrow_mut();
+                state.feedback =
+                    "Picture in picture is available after a video frame appears.".into();
+                refresh_from_parts(&weak_main, &mut state, &snapshot);
+                return;
+            };
+            if !playback.current_is_video || playback.current_id.is_none() {
+                let mut state = app_state.borrow_mut();
+                state.feedback = "Choose a video before opening picture in picture.".into();
+                refresh_from_parts(&weak_main, &mut state, &snapshot);
+                return;
+            }
+            let Some(main) = weak_main.upgrade() else {
+                return;
+            };
+            return_to_fullscreen_open.set(main.get_movie_fullscreen());
+
+            let mut picture_in_picture = picture_in_picture.borrow_mut();
+            if picture_in_picture.is_none() {
+                let pip = match PictureInPictureWindow::new() {
+                    Ok(pip) => pip,
+                    Err(error) => {
+                        let mut state = app_state.borrow_mut();
+                        state.feedback = format!("Picture in picture could not open: {error}");
+                        refresh_from_parts(&weak_main, &mut state, &snapshot);
+                        return;
+                    }
+                };
+                let pip_weak_for_close = pip.as_weak();
+                let main_weak_for_close = weak_main.clone();
+                let main_weak_for_toggle = weak_main.clone();
+                pip.on_toggle_pause(move || {
+                    if let Some(main) = main_weak_for_toggle.upgrade() {
+                        main.invoke_toggle_pause();
+                    }
+                });
+                pip.on_close_picture_in_picture(move || {
+                    if let Some(pip) = pip_weak_for_close.upgrade() {
+                        let _ = pip.hide();
+                    }
+                    if let Some(main) = main_weak_for_close.upgrade() {
+                        main.set_picture_in_picture_open(false);
+                    }
+                });
+
+                let pip_weak_for_return = pip.as_weak();
+                let main_weak_for_return = weak_main.clone();
+                let return_to_fullscreen = Rc::clone(&return_to_fullscreen);
+                pip.on_return_to_player(move || {
+                    if let Some(pip) = pip_weak_for_return.upgrade() {
+                        let _ = pip.hide();
+                    }
+                    if let Some(main) = main_weak_for_return.upgrade() {
+                        main.set_picture_in_picture_open(false);
+                        main.window().set_minimized(false);
+                        let _ = main.show();
+                        if return_to_fullscreen.get() {
+                            main.invoke_return_to_video();
+                        } else {
+                            main.set_movie_fullscreen(false);
+                            main.window().set_fullscreen(false);
+                        }
+                    }
+                });
+
+                let main_weak_for_native_close = weak_main.clone();
+                pip.window().on_close_requested(move || {
+                    if let Some(main) = main_weak_for_native_close.upgrade() {
+                        main.set_picture_in_picture_open(false);
+                    }
+                    CloseRequestResponse::HideWindow
+                });
+                *picture_in_picture = Some(pip);
+            }
+
+            let Some(pip) = picture_in_picture.as_ref() else {
+                return;
+            };
+            pip.set_video_frame(main.get_video_frame());
+            pip.set_has_video_frame(main.get_has_video_frame());
+            pip.set_current_title(SharedString::from(playback.current_title.as_str()));
+            pip.set_player_state(SharedString::from(playback.state.label()));
+            pip.set_can_toggle_pause(can_toggle_pause(&playback));
+            pip.set_is_paused(playback.state == PlaybackUiState::Paused);
+            match pip.show() {
+                Ok(()) => {
+                    main.set_picture_in_picture_open(true);
+                    let mut state = app_state.borrow_mut();
+                    state.feedback.clear();
+                    refresh_from_parts(&weak_main, &mut state, &snapshot);
+                }
+                Err(error) => {
+                    let mut state = app_state.borrow_mut();
+                    state.feedback = format!("Picture in picture could not open: {error}");
+                    refresh_from_parts(&weak_main, &mut state, &snapshot);
+                }
+            }
+        });
+    }
+    {
+        let picture_in_picture = Rc::clone(picture_in_picture);
+        let weak_main = ui.as_weak();
+        ui.on_close_picture_in_picture(move || {
+            if let Some(pip) = picture_in_picture.borrow().as_ref() {
+                let _ = pip.hide();
+            }
+            if let Some(main) = weak_main.upgrade() {
+                main.set_picture_in_picture_open(false);
+            }
+        });
+    }
+    {
+        let app_state = Rc::clone(app_state);
+        let displayed_frame = Rc::clone(displayed_frame);
+        let weak_main = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_save_video_frame(move || {
+            let Some(frame) = displayed_frame.borrow().clone() else {
+                let mut state = app_state.borrow_mut();
+                state.feedback = "A screenshot is available after a video frame appears.".into();
+                refresh_from_parts(&weak_main, &mut state, &snapshot);
+                return;
+            };
+            let Some(path) = FileDialog::new()
+                .add_filter("PNG image", &["png"])
+                .set_file_name("screenshot.png")
+                .save_file()
+            else {
+                return;
+            };
+            let result = image::save_buffer_with_format(
+                &path,
+                &frame.rgba,
+                frame.width,
+                frame.height,
+                image::ColorType::Rgba8,
+                image::ImageFormat::Png,
+            );
+            let mut state = app_state.borrow_mut();
+            state.feedback = match result {
+                Ok(()) => format!("Saved current video frame to {}.", path.display()),
+                Err(error) => format!("Unable to save video screenshot: {error}"),
+            };
+            refresh_from_parts(&weak_main, &mut state, &snapshot);
+        });
+    }
+}
+
+fn wire_extended_tools(
+    ui: &AppWindow,
+    app_state: &Rc<RefCell<AppState>>,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+) {
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_equalizer_enabled_changed(move |enabled| {
+            let mut state = state.borrow_mut();
+            match send_command(
+                &sender,
+                PlaybackCommand::SetEqualizerEnabled { enabled },
+                &snapshot,
+            ) {
+                Ok(()) => {
+                    state.equalizer_settings.enabled = enabled;
+                    state.equalizer_settings.preset_index = None;
+                    state.equalizer_settings_pending = true;
+                    state.equalizer_pending_preset = None;
+                    state.equalizer_restore_failed = false;
+                    state.equalizer_restore_fallback = false;
+                    state.equalizer_restore_sent_at = None;
+                    persist_library(&mut state);
+                    state.feedback.clear();
+                }
+                Err(error) => state.feedback = error,
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_equalizer_preset_changed(move |preset| {
+            let mut state = state.borrow_mut();
+            let playback = read_snapshot(&snapshot);
+            let Some(index) = playback
+                .equalizer_presets
+                .iter()
+                .position(|label| label == preset.as_str())
+            else {
+                state.feedback = "That equalizer preset is no longer available.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            match send_command(
+                &sender,
+                PlaybackCommand::SetEqualizerPreset { index },
+                &snapshot,
+            ) {
+                Ok(()) => {
+                    state.equalizer_settings.preset_index = Some(index);
+                    state.equalizer_settings_pending = true;
+                    state.equalizer_pending_preset = Some(index);
+                    state.equalizer_restore_failed = false;
+                    state.equalizer_restore_fallback = false;
+                    state.equalizer_restore_sent_at = None;
+                    state.equalizer_editing = false;
+                    persist_library(&mut state);
+                    state.feedback.clear();
+                }
+                Err(error) => state.feedback = error,
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_equalizer_preamp_draft_changed(move |gain| {
+            let mut state = state.borrow_mut();
+            if gain.is_finite() {
+                state.equalizer_settings.preamp_db = gain.clamp(
+                    crate::playback::MIN_EQUALIZER_GAIN_DB,
+                    crate::playback::MAX_EQUALIZER_GAIN_DB,
+                );
+                state.equalizer_settings.preset_index = None;
+                state.equalizer_editing = true;
+            }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_equalizer_preamp_changed(move |gain| {
+            let mut state = state.borrow_mut();
+            let gain = gain.clamp(
+                crate::playback::MIN_EQUALIZER_GAIN_DB,
+                crate::playback::MAX_EQUALIZER_GAIN_DB,
+            );
+            match send_command(
+                &sender,
+                PlaybackCommand::SetEqualizerPreamp { gain_db: gain },
+                &snapshot,
+            ) {
+                Ok(()) => {
+                    state.equalizer_settings.preamp_db = gain;
+                    state.equalizer_settings.preset_index = None;
+                    state.equalizer_settings_pending = true;
+                    state.equalizer_pending_preset = None;
+                    state.equalizer_restore_failed = false;
+                    state.equalizer_restore_fallback = false;
+                    state.equalizer_restore_sent_at = None;
+                    persist_library(&mut state);
+                    state.feedback.clear();
+                }
+                Err(error) => {
+                    state.equalizer_settings = read_snapshot(&snapshot).equalizer_settings;
+                    state.equalizer_settings_pending = false;
+                    state.feedback = error;
+                }
+            }
+            state.equalizer_editing = false;
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let snapshot = Arc::clone(snapshot);
+        ui.on_equalizer_preamp_cancelled(move || {
+            let mut state = state.borrow_mut();
+            state.equalizer_settings = read_snapshot(&snapshot).equalizer_settings;
+            state.equalizer_editing = false;
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_equalizer_band_draft_changed(move |index, gain| {
+            let mut state = state.borrow_mut();
+            if let (Ok(index), true) = (usize::try_from(index), gain.is_finite()) {
+                if let Some(value) = state.equalizer_settings.bands_db.get_mut(index) {
+                    *value = gain.clamp(
+                        crate::playback::MIN_EQUALIZER_GAIN_DB,
+                        crate::playback::MAX_EQUALIZER_GAIN_DB,
+                    );
+                    state.equalizer_settings.preset_index = None;
+                    state.equalizer_editing = true;
+                }
+            }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_equalizer_band_changed(move |index, gain| {
+            let mut state = state.borrow_mut();
+            let result = usize::try_from(index)
+                .ok()
+                .filter(|index| *index < state.equalizer_settings.bands_db.len())
+                .filter(|_| gain.is_finite())
+                .ok_or_else(|| "The equalizer band selection is invalid.".to_owned())
+                .and_then(|index| {
+                    let gain = gain.clamp(
+                        crate::playback::MIN_EQUALIZER_GAIN_DB,
+                        crate::playback::MAX_EQUALIZER_GAIN_DB,
+                    );
+                    send_command(
+                        &sender,
+                        PlaybackCommand::SetEqualizerBand {
+                            index,
+                            gain_db: gain,
+                        },
+                        &snapshot,
+                    )
+                    .map(|()| (index, gain))
+                });
+            match result {
+                Ok((index, gain)) => {
+                    state.equalizer_settings.bands_db[index] = gain;
+                    state.equalizer_settings.preset_index = None;
+                    state.equalizer_settings_pending = true;
+                    state.equalizer_pending_preset = None;
+                    state.equalizer_restore_failed = false;
+                    state.equalizer_restore_fallback = false;
+                    state.equalizer_restore_sent_at = None;
+                    persist_library(&mut state);
+                    state.feedback.clear();
+                }
+                Err(error) => {
+                    state.equalizer_settings = read_snapshot(&snapshot).equalizer_settings;
+                    state.equalizer_settings_pending = false;
+                    state.feedback = error;
+                }
+            }
+            state.equalizer_editing = false;
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let snapshot = Arc::clone(snapshot);
+        ui.on_equalizer_band_cancelled(move || {
+            let mut state = state.borrow_mut();
+            state.equalizer_settings = read_snapshot(&snapshot).equalizer_settings;
+            state.equalizer_editing = false;
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_set_ab_repeat_point(move |point, track_id, load_generation| {
+            let mut state = state.borrow_mut();
+            let playback = read_snapshot(&snapshot);
+            let result = parse_control_identity(track_id, load_generation.as_str(), &playback)
+                .ok_or_else(|| "The current media changed before the A/B point was set.".to_owned())
+                .and_then(|(track_id, load_generation)| {
+                    let point = match point.as_str() {
+                        "A" => AbPoint::A,
+                        "B" => AbPoint::B,
+                        _ => return Err("Choose point A or B.".into()),
+                    };
+                    send_command(
+                        &sender,
+                        PlaybackCommand::SetAbRepeatPoint {
+                            point,
+                            track_id,
+                            load_generation,
+                        },
+                        &snapshot,
+                    )
+                });
+            state.feedback = result.err().unwrap_or_default();
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_clear_ab_repeat(move |track_id, load_generation| {
+            let mut state = state.borrow_mut();
+            let playback = read_snapshot(&snapshot);
+            let result = parse_control_identity(track_id, load_generation.as_str(), &playback)
+                .ok_or_else(|| "The current media changed before the loop was cleared.".to_owned())
+                .and_then(|(track_id, load_generation)| {
+                    send_command(
+                        &sender,
+                        PlaybackCommand::ClearAbRepeat {
+                            track_id,
+                            load_generation,
+                        },
+                        &snapshot,
+                    )
+                });
+            state.feedback = result.err().unwrap_or_default();
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_set_sleep_timer(move |minutes| {
+            let mut state = state.borrow_mut();
+            let duration_ms = match minutes {
+                0 => Some(None),
+                15 | 30 | 60 => Some(Some(minutes as u64 * 60_000)),
+                _ => None,
+            };
+            let result = duration_ms
+                .ok_or_else(|| "Choose 15, 30 or 60 minutes, or cancel the timer.".to_owned())
+                .and_then(|duration_ms| {
+                    send_command(
+                        &sender,
+                        PlaybackCommand::SetSleepTimer { duration_ms },
+                        &snapshot,
+                    )
+                });
+            state.feedback = result.err().unwrap_or_default();
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_cast_address_draft_changed(move |address| {
+            state.borrow_mut().cast_address_input = address.to_string();
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_set_cast_target(move |address| {
+            let mut state = state.borrow_mut();
+            let address = address.trim();
+            if address.is_empty() {
+                state.feedback = "Enter a cast device IP address or hostname.".into();
+            } else if let Err(error) = send_command(
+                &sender,
+                PlaybackCommand::SetCastTarget {
+                    address: Some(address.to_owned()),
+                },
+                &snapshot,
+            ) {
+                state.feedback = error;
+            } else {
+                state.feedback.clear();
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_use_local_output(move || {
+            let mut state = state.borrow_mut();
+            if let Err(error) = send_command(
+                &sender,
+                PlaybackCommand::SetCastTarget { address: None },
+                &snapshot,
+            ) {
+                state.feedback = error;
+            } else {
+                state.feedback.clear();
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_subtitle_languages_changed(move |languages| {
+            state.borrow_mut().subtitle_language_input = languages.to_string();
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_search_subtitles(move |languages| {
+            let mut state = state.borrow_mut();
+            let playback = read_snapshot(&snapshot);
+            let Some(media_id) = playback.current_id.filter(|_| playback.current_is_video) else {
+                state.feedback = "Choose a video before searching for subtitles.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            let request_id = state.next_subtitle_request_id;
+            let Some(next_request_id) = request_id.checked_add(1) else {
+                state.feedback = "The subtitle request limit has been reached. Restart the application to continue.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            let query = find_track(&state, media_id)
+                .map(|track| track.title.trim().to_owned())
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| playback.current_title.clone());
+            if query.trim().is_empty() {
+                state.feedback = "This video has no title to search for.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            }
+            let languages = languages
+                .split(',')
+                .map(str::trim)
+                .filter(|language| !language.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let job = LibraryJob::SearchSubtitles {
+                request_id,
+                query: query.clone(),
+                languages,
+            };
+            let submitted = state
+                .library_worker
+                .as_ref()
+                .ok_or(crate::library_worker::QueueSubmitError::Stopped)
+                .and_then(|worker| worker.try_submit(job));
+            match submitted {
+                Ok(()) => {
+                    state.next_subtitle_request_id = next_request_id;
+                    state.subtitle_search_pending = Some(PendingSubtitleRequest {
+                        request_id,
+                        media_id,
+                        load_generation: playback.load_generation,
+                    });
+                    state.subtitle_results.clear();
+                    state.subtitle_search_status = format!("Searching OpenSubtitles for {query}…");
+                    state.feedback.clear();
+                }
+                Err(error) => state.feedback = error.message().into(),
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_download_subtitle(move |index| {
+            let mut state = state.borrow_mut();
+            let playback = read_snapshot(&snapshot);
+            let Some(media_id) = playback.current_id.filter(|_| playback.current_is_video) else {
+                state.feedback = "Choose a video before downloading a subtitle.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            let Some(result) = usize::try_from(index)
+                .ok()
+                .and_then(|index| state.subtitle_results.get(index))
+            else {
+                state.feedback = "That subtitle result is no longer available.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            let file_id = result.file_id;
+            let request_id = state.next_subtitle_request_id;
+            let Some(next_request_id) = request_id.checked_add(1) else {
+                state.feedback = "The subtitle request limit has been reached. Restart the application to continue.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            let submitted = state
+                .library_worker
+                .as_ref()
+                .ok_or(crate::library_worker::QueueSubmitError::Stopped)
+                .and_then(|worker| {
+                    worker.try_submit(LibraryJob::DownloadSubtitle {
+                        request_id,
+                        file_id,
+                    })
+                });
+            match submitted {
+                Ok(()) => {
+                    state.next_subtitle_request_id = next_request_id;
+                    state.subtitle_download_pending = Some(PendingSubtitleRequest {
+                        request_id,
+                        media_id,
+                        load_generation: playback.load_generation,
+                    });
+                    state.subtitle_search_status = "Downloading subtitle to the application cache…".into();
+                    state.feedback.clear();
+                }
+                Err(error) => state.feedback = error.message().into(),
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_save_opensubtitles_credentials(move |api_key, bearer_token| {
+            let mut state = state.borrow_mut();
+            let api_key = api_key.trim();
+            let bearer_token = bearer_token.trim();
+            if api_key.is_empty() {
+                state.opensubtitles_status =
+                    "Enter an OpenSubtitles API key. The bearer token is optional for search."
+                        .into();
+            } else {
+                match crate::credentials::save_opensubtitles_credentials(
+                    api_key,
+                    (!bearer_token.is_empty()).then_some(bearer_token),
+                ) {
+                    Ok(()) => {
+                        state.opensubtitles_credentials_available = true;
+                        state.opensubtitles_status =
+                            "OpenSubtitles credentials saved in the system credential store."
+                                .into();
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_opensubtitles_api_key_input(SharedString::default());
+                            ui.set_opensubtitles_bearer_token_input(SharedString::default());
+                        }
+                    }
+                    Err(error) => state.opensubtitles_status = error,
+                }
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_remove_opensubtitles_credentials(move || {
+            let mut state = state.borrow_mut();
+            match crate::credentials::clear_opensubtitles_credentials() {
+                Ok(()) => {
+                    state.opensubtitles_credentials_available = false;
+                    state.opensubtitles_status =
+                        "OpenSubtitles credentials removed from the system credential store."
+                            .into();
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_opensubtitles_api_key_input(SharedString::default());
+                        ui.set_opensubtitles_bearer_token_input(SharedString::default());
+                    }
+                }
+                Err(error) => state.opensubtitles_status = error,
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_bookmark_name_changed(move |name| {
+            state.borrow_mut().bookmark_name_input = name.to_string();
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_add_bookmark(move || {
+            let mut state = state.borrow_mut();
+            let playback = read_snapshot(&snapshot);
+            let Some(media_id) = playback.current_id else {
+                state.feedback = "Choose media before adding a bookmark.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            if state.bookmarks.len() >= 500 {
+                state.feedback = "This library has reached its 500-bookmark limit.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            }
+            let id = state
+                .bookmarks
+                .iter()
+                .map(|bookmark| bookmark.id)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1);
+            if id <= 0 {
+                state.feedback = "This library has reached its bookmark ID limit.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            }
+            let name = match bookmark_name(&state.bookmark_name_input, playback.position_ms) {
+                Ok(name) => name,
+                Err(message) => {
+                    state.feedback = message.into();
+                    refresh_from_parts(&weak, &mut state, &snapshot);
+                    return;
+                }
+            };
+            state.bookmarks.push(Bookmark {
+                id,
+                media_id,
+                name,
+                position_ms: playback.position_ms.max(0),
+            });
+            state.bookmark_name_input.clear();
+            state.feedback = "Bookmark added.".into();
+            persist_library(&mut state);
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let app_state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_bookmark_jump(move |index| {
+            let playback = read_snapshot(&snapshot);
+            let result = {
+                let state = app_state.borrow();
+                usize::try_from(index)
+                    .ok()
+                    .and_then(|index| state.bookmarks.get(index))
+                    .filter(|bookmark| Some(bookmark.media_id) == playback.current_id)
+                    .cloned()
+                    .ok_or_else(|| "That bookmark is not for the current media.".to_owned())
+            };
+            match result {
+                Ok(bookmark) => {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.invoke_seek_changed(
+                            bookmark.position_ms.max(0) as f32,
+                            bookmark.media_id,
+                            SharedString::from(playback.load_generation.to_string()),
+                            true,
+                        );
+                    }
+                }
+                Err(error) => {
+                    let mut state = app_state.borrow_mut();
+                    state.feedback = error;
+                    refresh_from_parts(&weak, &mut state, &snapshot);
+                }
+            }
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_remove_bookmark(move |index| {
+            let mut state = state.borrow_mut();
+            if let Ok(index) = usize::try_from(index) {
+                if index < state.bookmarks.len() {
+                    state.bookmarks.remove(index);
+                    state.feedback = "Bookmark removed.".into();
+                    persist_library(&mut state);
+                }
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        ui.on_network_url_input_changed(move |url| {
+            state.borrow_mut().network_url_input = url.to_string();
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_play_network_url(move |audio_only| {
+            let mut state = state.borrow_mut();
+            let input = state.network_url_input.trim().to_owned();
+            let result = NetworkUrl::parse(&input)
+                .map_err(|error| error.to_string())
+                .and_then(|url| {
+                    ensure_network_track(&mut state, &url, audio_only).map(|track| (track, url))
+                });
+            match result {
+                Ok((track, _)) => {
+                    if audio_only {
+                        state.current_view = "music".into();
+                        state.music_section = "tracks".into();
+                    } else {
+                        state.current_view = "movies".into();
+                        state.movie_level = "catalog".into();
+                    }
+                    if play_collection_and_enter_video(
+                        &weak,
+                        &mut state,
+                        &sender,
+                        &snapshot,
+                        vec![track],
+                        0,
+                        None,
+                    ) {
+                        state.network_url_input.clear();
+                        persist_library(&mut state);
+                    }
+                }
+                Err(error) => state.feedback = error,
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let sender = sender.clone();
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_open_network_history(move |index| {
+            let mut state = state.borrow_mut();
+            let entry = usize::try_from(index)
+                .ok()
+                .and_then(|index| state.network_history.get(index))
+                .cloned();
+            let result = entry
+                .ok_or_else(|| "That network address is no longer in history.".to_owned())
+                .and_then(|entry| {
+                    let audio_only = state.tracks.iter().any(|track| {
+                        matches!(&track.source, TrackSource::Network(url) if *url == entry.url)
+                            && track.format == "STREAM"
+                    });
+                    ensure_network_track(&mut state, &entry.url, audio_only)
+                        .map(|track| (track, audio_only))
+                });
+            match result {
+                Ok((track, audio_only)) => {
+                    if audio_only {
+                        state.current_view = "music".into();
+                        state.music_section = "tracks".into();
+                    } else {
+                        state.current_view = "movies".into();
+                        state.movie_level = "catalog".into();
+                    }
+                    let _ = play_collection_and_enter_video(
+                        &weak,
+                        &mut state,
+                        &sender,
+                        &snapshot,
+                        vec![track],
+                        0,
+                        None,
+                    );
+                }
+                Err(error) => state.feedback = error,
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_remove_network_history(move |index| {
+            let mut state = state.borrow_mut();
+            if let Ok(index) = usize::try_from(index) {
+                if index < state.network_history.len() {
+                    state.network_history.remove(index);
+                    persist_library(&mut state);
+                    state.feedback = "Network history entry removed.".into();
+                }
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+}
+
+fn wire_playlist_io(
+    ui: &AppWindow,
+    app_state: &Rc<RefCell<AppState>>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+) {
+    {
+        let app_state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_import_m3u8(move || {
+            let Some(path) = FileDialog::new()
+                .add_filter("M3U8 playlist", &["m3u8", "m3u"])
+                .pick_file()
+            else {
+                return;
+            };
+            let result = {
+                let mut state = app_state.borrow_mut();
+                import_m3u8_into_state(&mut state, &path)
+            };
+            let mut state = app_state.borrow_mut();
+            match result {
+                Ok(message) => {
+                    state.playlist_io_status = message.clone();
+                    state.feedback = message;
+                    persist_library(&mut state);
+                }
+                Err(error) => {
+                    state.playlist_io_status = error.clone();
+                    state.feedback = error;
+                }
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+    {
+        let app_state = Rc::clone(app_state);
+        let weak = ui.as_weak();
+        let snapshot = Arc::clone(snapshot);
+        ui.on_export_m3u8(move |playlist_id| {
+            let source = {
+                let state = app_state.borrow();
+                let playlist = state
+                    .playlists
+                    .playlists()
+                    .iter()
+                    .find(|playlist| playlist.id == playlist_id)
+                    .cloned();
+                playlist.map(|playlist| {
+                    let tracks = state
+                        .tracks
+                        .iter()
+                        .chain(&state.movies)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    (playlist, tracks)
+                })
+            };
+            let Some((playlist, tracks)) = source else {
+                let mut state = app_state.borrow_mut();
+                state.playlist_io_status = "Choose an opened playlist to export.".into();
+                refresh_from_parts(&weak, &mut state, &snapshot);
+                return;
+            };
+            let file_name = format!("{}.m3u8", safe_filename(&playlist.name));
+            let Some(path) = FileDialog::new()
+                .add_filter("M3U8 playlist", &["m3u8"])
+                .set_file_name(&file_name)
+                .save_file()
+            else {
+                return;
+            };
+            let export = path
+                .parent()
+                .ok_or_else(|| "Choose a playlist file inside a folder.".to_owned())
+                .and_then(|directory| {
+                    crate::playlists::export_m3u8(&playlist, &tracks, directory)
+                        .map_err(|error| error.to_string())
+                })
+                .and_then(|text| {
+                    std::fs::write(&path, text.as_bytes()).map_err(|error| error.to_string())
+                });
+            let mut state = app_state.borrow_mut();
+            match export {
+                Ok(()) => {
+                    state.playlist_io_status = format!("Exported to {}.", path.display());
+                    state.feedback = "Playlist exported. Source media was left untouched.".into();
+                }
+                Err(error) => {
+                    state.playlist_io_status = format!("Export failed: {error}");
+                    state.feedback = state.playlist_io_status.clone();
+                }
+            }
+            refresh_from_parts(&weak, &mut state, &snapshot);
+        });
+    }
+}
+
+fn import_m3u8_into_state(state: &mut AppState, path: &std::path::Path) -> Result<String, String> {
+    const MAX_PLAYLIST_BYTES: u64 = 2 * 1024 * 1024;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "Choose a playlist file inside a folder.".to_owned())?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|error| format!("Unable to open playlist: {error}"))?
+        .take(MAX_PLAYLIST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Unable to read playlist: {error}"))?;
+    if bytes.len() as u64 > MAX_PLAYLIST_BYTES {
+        return Err("The playlist exceeds the 2 MiB import limit.".into());
+    }
+    let entries =
+        crate::playlists::parse_m3u8(&bytes, directory).map_err(|error| error.to_string())?;
+    if entries.is_empty() {
+        return Err("This playlist contains no media entries.".into());
+    }
+
+    let mut normalized_entries = Vec::with_capacity(entries.len());
+    let mut new_local_paths = Vec::new();
+    let local_tracks = state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .filter(|track| track.source == TrackSource::Local);
+    let mut known_local_paths = HashSet::new();
+    for track in local_tracks {
+        known_local_paths.insert(path_identity_key(&track.path));
+        if let Ok(canonical) = std::fs::canonicalize(&track.path) {
+            known_local_paths.insert(path_identity_key(&canonical));
+        }
+    }
+    for entry in entries {
+        match entry.source {
+            crate::playlists::M3u8EntrySource::Local(source_path) => {
+                if !source_path.is_file() {
+                    return Err(format!(
+                        "Playlist media is unavailable: {}",
+                        source_path.display()
+                    ));
+                }
+                let source_identity = path_identity_key(&source_path);
+                let canonical = std::fs::canonicalize(&source_path).map_err(|error| {
+                    format!(
+                        "Unable to resolve playlist media {}: {error}",
+                        source_path.display()
+                    )
+                })?;
+                if !is_movie_path(&canonical) && !is_audio_path(&canonical) {
+                    return Err(format!(
+                        "Playlist media has an unsupported format: {}",
+                        source_path.display()
+                    ));
+                }
+                let canonical_identity = path_identity_key(&canonical);
+                if !known_local_paths.contains(&source_identity)
+                    && !known_local_paths.contains(&canonical_identity)
+                {
+                    new_local_paths.push(canonical.clone());
+                }
+                known_local_paths.insert(source_identity);
+                known_local_paths.insert(canonical_identity);
+                normalized_entries.push(crate::playlists::M3u8EntrySource::Local(canonical));
+            }
+            crate::playlists::M3u8EntrySource::Network(url) => {
+                normalized_entries.push(crate::playlists::M3u8EntrySource::Network(url));
+            }
+        }
+    }
+
+    add_paths(state, new_local_paths, None);
+    let mut local_tracks_by_path = HashMap::new();
+    for track in state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .filter(|track| track.source == TrackSource::Local)
+    {
+        local_tracks_by_path
+            .entry(path_identity_key(&track.path))
+            .or_insert(track.id);
+        if let Ok(canonical) = std::fs::canonicalize(&track.path) {
+            local_tracks_by_path
+                .entry(path_identity_key(&canonical))
+                .or_insert(track.id);
+        }
+    }
+    let mut occurrences = Vec::with_capacity(normalized_entries.len());
+    for source in normalized_entries {
+        let track = match source {
+            crate::playlists::M3u8EntrySource::Local(path) => local_tracks_by_path
+                .get(&path_identity_key(&path))
+                .and_then(|id| find_track(state, *id))
+                .cloned()
+                .ok_or_else(|| format!("Unable to add playlist media: {}", path.display()))?,
+            crate::playlists::M3u8EntrySource::Network(url) => {
+                ensure_network_track(state, &url, true).map_err(|error| error.to_string())?
+            }
+        };
+        occurrences.push(track);
+    }
+
+    let base_name = path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(safe_filename)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Imported playlist".into());
+    let mut name = base_name.clone();
+    let mut suffix = 2u32;
+    while state
+        .playlists
+        .playlists()
+        .iter()
+        .any(|playlist| playlist.name.eq_ignore_ascii_case(&name))
+    {
+        name = format!("{base_name} ({suffix})");
+        suffix = suffix.saturating_add(1);
+    }
+    let id = state
+        .playlists
+        .create(&name)
+        .map_err(|error| error.to_string())?;
+    state.playlist_target = Some(id);
+    state.playlists.select(id);
+    if let Err(error) = state
+        .playlists
+        .add_tracks_with_duplicates(&occurrences, true)
+    {
+        state.playlists.remove(id);
+        state.playlist_target = state.playlists.selected_id();
+        return Err(error.to_string());
+    }
+    state.current_view = "music".into();
+    state.music_section = "playlists".into();
+    state.opened_playlist = Some(id);
+    state.playlist_rename_input = name.clone();
+    state.page_index = 0;
+    Ok(format!("Imported {} entries as {name}.", occurrences.len()))
+}
+
+fn is_audio_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| {
+            AUDIO_EXTENSIONS
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(extension))
+        })
+}
+
+fn safe_filename(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control() && !matches!(*character, '/' | '\\' | ':'))
+        .take(100)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn parse_control_identity(
+    track_id: i32,
+    load_generation: &str,
+    playback: &PlaybackSnapshot,
+) -> Option<(TrackId, u64)> {
+    let load_generation = load_generation.parse::<u64>().ok()?;
+    (playback.current_id == Some(track_id)
+        && playback.load_generation == load_generation
+        && playback.runtime_available)
+        .then_some((track_id, load_generation))
+}
+
+fn ensure_network_track(
+    state: &mut AppState,
+    url: &NetworkUrl,
+    audio_only: bool,
+) -> Result<Track, String> {
+    if let Some(track) = state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .find(|track| {
+            matches!(&track.source, TrackSource::Network(existing) if existing == url)
+                && (track.format == "STREAM") == audio_only
+        })
+        .cloned()
+    {
+        return Ok(track);
+    }
+    let id = state.next_id;
+    if id <= 0 || id == TrackId::MAX {
+        return Err("This library has reached its media ID limit.".into());
+    }
+    let track = if audio_only {
+        Track::from_network_audio_url(id, url.as_str())
+    } else {
+        Track::from_network_url(id, url.as_str())
+    }
+    .map_err(|error| error.to_string())?;
+    state.next_id = state.next_id.saturating_add(1);
+    if audio_only {
+        state.tracks.push(track.clone());
+    } else {
+        state.movies.push(track.clone());
+    }
+    Ok(track)
+}
+
 fn persist_library(state: &mut AppState) {
     let Some(storage) = state.storage.as_ref() else {
         return;
@@ -2075,7 +3795,256 @@ fn library_snapshot(state: &AppState) -> LibraryData {
             .iter()
             .map(|(id, details)| (*id, details.clone()))
             .collect(),
+        watched_roots: state.watched_roots.clone(),
+        queue_checkpoint: state.queue_checkpoint.clone(),
+        bookmarks: state.bookmarks.clone(),
+        network_history: state.network_history.clone(),
+        equalizer_settings: state.equalizer_settings,
     }
+}
+
+fn restore_queue_tracks(state: &AppState, checkpoint: &QueueCheckpoint) -> Vec<Track> {
+    checkpoint
+        .entry_ids
+        .iter()
+        .filter_map(|id| find_track(state, *id).cloned())
+        .collect()
+}
+
+fn submit_queue_restore(
+    state: &mut AppState,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+) {
+    if !state.queue_restore_pending {
+        return;
+    }
+    if read_snapshot(snapshot).queue_restored {
+        state.queue_restore_pending = false;
+        return;
+    }
+
+    match send_command(
+        sender,
+        PlaybackCommand::RestoreQueue {
+            tracks: restore_queue_tracks(state, &state.queue_checkpoint),
+            checkpoint: state.queue_checkpoint.clone(),
+        },
+        snapshot,
+    ) {
+        Ok(()) => {
+            state.queue_restore_pending = false;
+            state.feedback.clear();
+        }
+        Err(error) if error == "Playback is busy. Wait a moment, then try again." => {
+            state.feedback = error;
+        }
+        Err(error) => {
+            state.queue_restore_pending = false;
+            state.feedback = error;
+        }
+    }
+}
+
+fn update_queue_checkpoint(
+    state: &mut AppState,
+    playback: &PlaybackSnapshot,
+    save_position: bool,
+) -> bool {
+    if !playback.queue_restored {
+        return false;
+    }
+    state.queue_restore_pending = false;
+    let current = &playback.queue_checkpoint;
+    let previous = &state.queue_checkpoint;
+    let structure_changed = previous.entry_ids != current.entry_ids
+        || previous.order != current.order
+        || previous.position != current.position
+        || previous.wrapped_from_end != current.wrapped_from_end
+        || previous.repeat_mode != current.repeat_mode
+        || previous.shuffle != current.shuffle;
+    let position_changed = previous.position_ms != current.position_ms;
+    state.queue_checkpoint = current.clone();
+    structure_changed || (save_position && position_changed)
+}
+
+fn submit_equalizer_restore(
+    state: &mut AppState,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+) {
+    if !state.equalizer_restore_pending {
+        return;
+    }
+    match send_command(
+        sender,
+        PlaybackCommand::SetEqualizerSettings(state.equalizer_settings),
+        snapshot,
+    ) {
+        Ok(()) => {
+            state.equalizer_restore_pending = false;
+            state.equalizer_restore_sent_at = Some(Instant::now());
+        }
+        Err(error) if error == "Playback is busy. Wait a moment, then try again." => {}
+        Err(error) => {
+            if !state.equalizer_restore_fallback {
+                state.equalizer_settings = EqualizerSettings::default();
+                state.equalizer_restore_fallback = true;
+                state.equalizer_settings_pending = true;
+                state.equalizer_restore_sent_at = None;
+                state.feedback = format!(
+                    "Saved equalizer settings were rejected ({error}). Trying safe defaults."
+                );
+            } else {
+                state.equalizer_restore_pending = false;
+                state.equalizer_settings_pending = false;
+                state.equalizer_restore_sent_at = None;
+                state.equalizer_restore_failed = true;
+                state.feedback = format!(
+                    "Equalizer settings could not be applied ({error}); safe defaults remain saved."
+                );
+            }
+        }
+    }
+}
+
+fn reconcile_equalizer_settings(state: &mut AppState, playback: &PlaybackSnapshot) -> bool {
+    if state.equalizer_restore_failed {
+        return false;
+    }
+    if state.equalizer_editing {
+        return false;
+    }
+    if state.equalizer_settings_pending {
+        if playback.equalizer_settings == state.equalizer_settings {
+            state.equalizer_settings_pending = false;
+            state.equalizer_restore_sent_at = None;
+            if state.equalizer_restore_fallback {
+                state.equalizer_restore_fallback = false;
+                state.feedback =
+                    "Saved equalizer settings were unavailable; safe defaults were restored."
+                        .into();
+                return true;
+            }
+            return false;
+        }
+        if state
+            .equalizer_restore_sent_at
+            .is_some_and(|sent_at| sent_at.elapsed() >= Duration::from_secs(5))
+        {
+            state.equalizer_restore_sent_at = None;
+            if !state.equalizer_restore_fallback {
+                state.equalizer_settings = EqualizerSettings::default();
+                state.equalizer_restore_fallback = true;
+                state.equalizer_restore_pending = true;
+                state.equalizer_settings_pending = true;
+                state.feedback =
+                    "Saved equalizer settings did not apply. Trying safe defaults instead.".into();
+                return false;
+            }
+            state.equalizer_restore_pending = false;
+            state.equalizer_settings_pending = false;
+            state.equalizer_restore_failed = true;
+            state.feedback =
+                "Equalizer runtime did not acknowledge safe defaults; saved values were reset."
+                    .into();
+            return true;
+        }
+        if let Some(index) = state.equalizer_pending_preset {
+            if playback.equalizer_settings.preset_index == Some(index) {
+                state.equalizer_settings = playback.equalizer_settings;
+                state.equalizer_settings_pending = false;
+                state.equalizer_pending_preset = None;
+                state.equalizer_restore_sent_at = None;
+                return true;
+            }
+        }
+        return false;
+    }
+    if state.equalizer_settings != playback.equalizer_settings {
+        state.equalizer_settings = playback.equalizer_settings;
+        return true;
+    }
+    false
+}
+
+fn update_network_history(state: &mut AppState, playback: &PlaybackSnapshot) -> bool {
+    let active = matches!(
+        playback.state,
+        PlaybackUiState::Loading
+            | PlaybackUiState::Playing
+            | PlaybackUiState::Paused
+            | PlaybackUiState::Ended
+    );
+    if !active {
+        state.last_network_history_key = None;
+        return false;
+    }
+    let Some(media_id) = playback.current_id else {
+        state.last_network_history_key = None;
+        return false;
+    };
+    let key = (media_id, playback.load_generation);
+    if state.last_network_history_key == Some(key) {
+        return false;
+    }
+    state.last_network_history_key = Some(key);
+    let Some(track) = find_track(state, media_id) else {
+        return false;
+    };
+    let TrackSource::Network(url) = &track.source else {
+        return false;
+    };
+    let entry = NetworkHistoryEntry {
+        url: url.clone(),
+        title: network_history_title(&track.title),
+        last_played_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+            .unwrap_or_default(),
+    };
+    state
+        .network_history
+        .retain(|existing| existing.url != entry.url);
+    state.network_history.insert(0, entry);
+    state.network_history.truncate(100);
+    true
+}
+
+fn bookmark_name(input: &str, position_ms: i64) -> Result<String, &'static str> {
+    if input.chars().any(char::is_control) {
+        return Err("Bookmark names cannot contain control characters.");
+    }
+    let entered = input.trim();
+    if entered.len() > MAX_BOOKMARK_NAME_BYTES {
+        return Err("Bookmark names can be at most 128 UTF-8 bytes.");
+    }
+    Ok(if entered.is_empty() {
+        format!("Point at {}", format_time(position_ms))
+    } else {
+        entered.to_owned()
+    })
+}
+
+fn network_history_title(title: &str) -> String {
+    let title = title
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>();
+    let title = title.trim();
+    let title = if title.is_empty() || title.contains("://") {
+        "Network stream".to_owned()
+    } else {
+        title.to_owned()
+    };
+    let mut bounded = String::with_capacity(title.len().min(MAX_NETWORK_HISTORY_TITLE_BYTES));
+    for character in title.chars() {
+        if bounded.len() + character.len_utf8() > MAX_NETWORK_HISTORY_TITLE_BYTES {
+            break;
+        }
+        bounded.push(character);
+    }
+    bounded
 }
 
 fn update_progress(state: &mut AppState, playback: &PlaybackSnapshot) {
@@ -2144,7 +4113,42 @@ fn play_collection(
     }
 }
 
-fn process_library_events(state: &mut AppState) {
+fn play_collection_and_enter_video(
+    weak: &slint::Weak<AppWindow>,
+    state: &mut AppState,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    queue: Vec<Track>,
+    start_index: usize,
+    resume_position_ms: Option<i64>,
+) -> bool {
+    let starts_movie = collection_starts_movie(&queue, start_index);
+    if !play_collection(
+        state,
+        sender,
+        snapshot,
+        queue,
+        start_index,
+        resume_position_ms,
+    ) {
+        return false;
+    }
+    if starts_movie {
+        if let Some(ui) = weak.upgrade() {
+            state.fullscreen_activity_at = Some(Instant::now());
+            ui.set_movie_fullscreen(true);
+            ui.window().set_fullscreen(true);
+        }
+    }
+    true
+}
+
+fn process_library_events(
+    state: &mut AppState,
+    playback: &PlaybackSnapshot,
+    sender: &SyncSender<PlaybackCommand>,
+    snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+) {
     let events = state
         .library_worker
         .as_ref()
@@ -2152,7 +4156,16 @@ fn process_library_events(state: &mut AppState) {
         .unwrap_or_default();
     for event in events {
         match event {
-            LibraryEvent::Scanned(outcome) => apply_scan_result(state, outcome),
+            LibraryEvent::Scanned(root, outcome) => {
+                if state
+                    .active_root_scan
+                    .as_ref()
+                    .is_some_and(|active| path_identity_key(active) == path_identity_key(&root))
+                {
+                    state.active_root_scan = None;
+                }
+                apply_scan_result(state, root, outcome);
+            }
             LibraryEvent::Metadata(id, result) => {
                 if state.tracks.iter().any(|track| track.id == id) {
                     state.automatic_artwork_readiness.insert(id, result.is_ok());
@@ -2188,6 +4201,80 @@ fn process_library_events(state: &mut AppState) {
                     state.active_automatic_artwork = None;
                 }
                 apply_automatic_artwork_result(state, id, &request, result);
+            }
+            LibraryEvent::SubtitlesFound(request_id, result) => {
+                let Some(request) = state
+                    .subtitle_search_pending
+                    .filter(|request| request.request_id == request_id)
+                else {
+                    continue;
+                };
+                state.subtitle_search_pending = None;
+                if playback.current_id != Some(request.media_id)
+                    || playback.load_generation != request.load_generation
+                {
+                    state.subtitle_search_status =
+                        "Search results were discarded because the media changed.".into();
+                    continue;
+                }
+                match result {
+                    Ok(results) => {
+                        let count = results.len();
+                        state.subtitle_results = results;
+                        state.subtitle_search_status = if count == 0 {
+                            "No matching subtitles found.".into()
+                        } else {
+                            format!("Found {count} subtitle result(s).")
+                        };
+                    }
+                    Err(error) => {
+                        state.subtitle_results.clear();
+                        state.subtitle_search_status = error.clone();
+                        state.feedback = error;
+                    }
+                }
+            }
+            LibraryEvent::SubtitleDownloaded(request_id, result) => {
+                let Some(request) = state
+                    .subtitle_download_pending
+                    .filter(|request| request.request_id == request_id)
+                else {
+                    continue;
+                };
+                state.subtitle_download_pending = None;
+                match result {
+                    Ok(path)
+                        if playback.current_id == Some(request.media_id)
+                            && playback.load_generation == request.load_generation =>
+                    {
+                        match send_command(
+                            sender,
+                            PlaybackCommand::AddSubtitle {
+                                media_id: request.media_id,
+                                load_generation: request.load_generation,
+                                path,
+                            },
+                            snapshot,
+                        ) {
+                            Ok(()) => {
+                                state.subtitle_search_status =
+                                    "Subtitle downloaded and attached.".into();
+                                state.feedback.clear();
+                            }
+                            Err(error) => {
+                                state.subtitle_search_status = error.clone();
+                                state.feedback = error;
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        state.subtitle_search_status = "Subtitle downloaded to cache, but media changed before it could be attached.".into();
+                    }
+                    Err(error) => {
+                        state.subtitle_search_status = error.clone();
+                        state.feedback = error;
+                    }
+                }
             }
         }
     }
@@ -2376,8 +4463,199 @@ fn apply_metadata_result(state: &mut AppState, id: TrackId, metadata: LocalMetad
     persist_library(state);
 }
 
-fn apply_scan_result(state: &mut AppState, outcome: ScanOutcome) {
+const ROOT_SCAN_INTERVAL: Duration = Duration::from_secs(60);
+
+fn add_watched_root(state: &mut AppState, selected: PathBuf) -> Result<bool, String> {
+    let root = selected
+        .canonicalize()
+        .map_err(|error| format!("Unable to resolve the selected folder: {error}"))?;
+    if !root.is_dir() {
+        return Err("The selected path is not a folder.".into());
+    }
+    let identity = path_identity_key(&root);
+    if let Some(existing) = state
+        .watched_roots
+        .iter()
+        .find(|watched| {
+            let canonical = watched
+                .canonicalize()
+                .unwrap_or_else(|_| watched.to_path_buf());
+            path_identity_key(&canonical) == identity
+        })
+        .cloned()
+    {
+        queue_root_scan(state, existing);
+        return Ok(false);
+    }
+    state.watched_roots.push(root.clone());
+    state.root_scan_status.insert(identity, "Queued".into());
+    queue_root_scan(state, root);
+    persist_library(state);
+    Ok(true)
+}
+
+fn remove_watched_root(state: &mut AppState, index: usize) -> Option<PathBuf> {
+    if index >= state.watched_roots.len() {
+        return None;
+    }
+    let root = state.watched_roots.remove(index);
+    let identity = path_identity_key(&root);
+    state
+        .pending_root_scans
+        .retain(|pending| path_identity_key(pending) != identity);
+    state.root_scan_status.remove(&identity);
+    persist_library(state);
+    Some(root)
+}
+
+fn queue_root_scan(state: &mut AppState, root: PathBuf) {
+    let identity = path_identity_key(&root);
+    let watched = state
+        .watched_roots
+        .iter()
+        .any(|watched| path_identity_key(watched) == identity);
+    let active = state
+        .active_root_scan
+        .as_ref()
+        .is_some_and(|active| path_identity_key(active) == identity);
+    let pending = state
+        .pending_root_scans
+        .iter()
+        .any(|pending| path_identity_key(pending) == identity);
+    if watched && !active && !pending {
+        state.pending_root_scans.push_back(root.clone());
+        state.root_scan_status.insert(identity, "Queued".into());
+    }
+}
+
+fn schedule_periodic_root_scans(state: &mut AppState) {
+    if state.last_scheduled_root_scan.elapsed() < ROOT_SCAN_INTERVAL {
+        return;
+    }
+    let roots = state.watched_roots.clone();
+    for root in roots {
+        queue_root_scan(state, root);
+    }
+    state.last_scheduled_root_scan = Instant::now();
+}
+
+fn flush_pending_root_scans(state: &mut AppState) {
+    if state.active_root_scan.is_some() {
+        return;
+    }
+    while let Some(root) = state.pending_root_scans.front().cloned() {
+        let identity = path_identity_key(&root);
+        if !state
+            .watched_roots
+            .iter()
+            .any(|watched| path_identity_key(watched) == identity)
+        {
+            state.pending_root_scans.pop_front();
+            continue;
+        }
+        let Some(worker) = state.library_worker.as_ref() else {
+            state
+                .root_scan_status
+                .insert(identity, "Scanning unavailable".into());
+            state.pending_root_scans.clear();
+            return;
+        };
+        match worker.try_submit(LibraryJob::Scan(root.clone())) {
+            Ok(()) => {
+                state.pending_root_scans.pop_front();
+                state.active_root_scan = Some(root.clone());
+                state.root_scan_status.insert(identity, "Scanning".into());
+            }
+            Err(crate::library_worker::QueueSubmitError::Full) => return,
+            Err(crate::library_worker::QueueSubmitError::Stopped) => {
+                state
+                    .root_scan_status
+                    .insert(identity, "Scanning unavailable".into());
+                state.pending_root_scans.clear();
+                state.library_status =
+                    "Folder scanning stopped. Restart the application to scan watched folders."
+                        .into();
+                return;
+            }
+        }
+        return;
+    }
+}
+
+fn apply_scan_result(state: &mut AppState, root: PathBuf, outcome: ScanOutcome) {
+    let root_identity = path_identity_key(&root);
+    if !state
+        .watched_roots
+        .iter()
+        .any(|watched| path_identity_key(watched) == root_identity)
+    {
+        return;
+    }
+    let found = outcome
+        .paths
+        .iter()
+        .map(|path| path_identity_key(path))
+        .collect::<HashSet<_>>();
+    let track_paths = state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .filter(|track| track.source == TrackSource::Local)
+        .map(|track| (path_identity_key(&track.path), track.id))
+        .collect::<Vec<_>>();
+    let mut track_ids_by_path = HashMap::new();
+    for (path, track_id) in &track_paths {
+        track_ids_by_path.entry(path.clone()).or_insert(*track_id);
+    }
+    let mut changed_ids = Vec::new();
+    for fingerprint in &outcome.fingerprints {
+        let identity = path_identity_key(&fingerprint.path);
+        if let Some(track_id) = track_ids_by_path.get(&identity) {
+            if state
+                .file_fingerprints
+                .get(&identity)
+                .is_some_and(|previous| file_fingerprint_changed(previous, fingerprint))
+            {
+                changed_ids.push(*track_id);
+            }
+        }
+        state
+            .file_fingerprints
+            .insert(identity, fingerprint.clone());
+    }
+    if outcome.complete {
+        for (path, track_id) in &track_paths {
+            if path.starts_with(&root_identity) {
+                if found.contains(path) {
+                    state.unavailable_media.remove(track_id);
+                } else {
+                    state.unavailable_media.insert(*track_id);
+                }
+            }
+        }
+        state.root_scan_status.insert(
+            root_identity.clone(),
+            format!("Scanned · {} media files", outcome.paths.len()),
+        );
+    } else {
+        let detail = outcome
+            .warnings
+            .first()
+            .map(String::as_str)
+            .unwrap_or("Scan incomplete; existing library entries were retained.");
+        state
+            .root_scan_status
+            .insert(root_identity, format!("Incomplete: {detail}"));
+    }
+    changed_ids.sort_unstable();
+    changed_ids.dedup();
+    for id in changed_ids {
+        if !state.pending_metadata.contains(&id) {
+            state.pending_metadata.push_back(id);
+        }
+    }
     let (count, metadata_available) = add_paths(state, outcome.paths, None);
+    flush_pending_metadata(state);
     if count > 0 {
         state.current_view = if !state.movies.is_empty() {
             "movies"
@@ -2393,8 +4671,6 @@ fn apply_scan_result(state: &mut AppState, outcome: ScanOutcome) {
             );
         }
         persist_library(state);
-    } else if metadata_available {
-        state.feedback = "The scan found no new supported media files.".into();
     }
     if !outcome.complete {
         let detail = outcome
@@ -2407,6 +4683,17 @@ fn apply_scan_result(state: &mut AppState, outcome: ScanOutcome) {
             state.feedback
         );
     }
+}
+
+fn file_fingerprint_changed(
+    previous: &crate::scan::FileFingerprint,
+    current: &crate::scan::FileFingerprint,
+) -> bool {
+    previous.size != current.size
+        || match (previous.modified, current.modified) {
+            (Some(previous), Some(current)) => previous != current,
+            _ => true,
+        }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2480,7 +4767,10 @@ fn music_collection(state: &AppState) -> Vec<Track> {
     let opened_playlist = state.current_view == "music"
         && state.music_section == "playlists"
         && state.opened_playlist.is_some();
-    if !opened_playlist {
+    let album_disc_track_default = state.music_section == "albums"
+        && state.open_music_group.is_some()
+        && (!state.music_sort_explicit || state.music_sort == "album");
+    if !opened_playlist && !album_disc_track_default {
         sort_music_tracks(&mut tracks, state);
     }
     tracks
@@ -2497,19 +4787,19 @@ fn playlist_collection_for(
     query: &str,
     genre: &str,
 ) -> Vec<Track> {
+    let tracks = state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .cloned()
+        .collect::<Vec<_>>();
     let playlist = state
         .playlists
         .playlists()
         .iter()
         .find(|playlist| playlist.id == id);
-    let mut tracks = browse::collection(
-        &state.tracks,
-        &state.details,
-        "playlists",
-        None,
-        playlist,
-        query,
-    );
+    let mut tracks =
+        browse::collection(&tracks, &state.details, "playlists", None, playlist, query);
     if genre != "All genres" {
         tracks.retain(|track| genre_matches(&state.details, track.id, genre));
     }
@@ -2525,7 +4815,12 @@ fn playlist_filtered_positions(state: &AppState, id: PlaylistId, query: &str) ->
     else {
         return Vec::new();
     };
-    let tracks: HashMap<_, _> = state.tracks.iter().map(|track| (track.id, track)).collect();
+    let tracks: HashMap<_, _> = state
+        .tracks
+        .iter()
+        .chain(&state.movies)
+        .map(|track| (track.id, track))
+        .collect();
     playlist
         .track_ids
         .iter()
@@ -2640,6 +4935,12 @@ fn collection_track_at(queue: &[Track], id: TrackId, requested_index: i32) -> Op
         .filter(|track| track.id == id)
 }
 
+fn collection_starts_movie(queue: &[Track], start_index: usize) -> bool {
+    queue
+        .get(start_index)
+        .is_some_and(crate::playback::is_movie)
+}
+
 fn movie_matches(state: &AppState, track: &Track) -> bool {
     if !browse::matches_query(track, state.details.get(&track.id), &state.query) {
         return false;
@@ -2663,6 +4964,53 @@ fn movie_matches(state: &AppState, track: &Track) -> bool {
         "unwatched" => progress.is_none_or(|p| !p.completed && p.position_ms <= 10_000),
         _ => true,
     }
+}
+
+fn path_identity_key(path: &Path) -> PathIdentityKey {
+    #[cfg(windows)]
+    let path = {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let units = path.as_os_str().encode_wide().collect::<Vec<_>>();
+        PathBuf::from(OsString::from_wide(&windows_path_identity_units(&units)))
+    };
+    #[cfg(not(windows))]
+    let path = path;
+
+    path.components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect()
+}
+
+#[cfg(any(windows, test))]
+fn windows_path_identity_units(path: &[u16]) -> Vec<u16> {
+    const VERBATIM_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+
+    let Some(remainder) = path.strip_prefix(&VERBATIM_PREFIX) else {
+        return path.to_vec();
+    };
+    if wide_prefix_eq_ascii(remainder, b"UNC\\") {
+        let mut normalized = vec![b'\\' as u16, b'\\' as u16];
+        normalized.extend_from_slice(&remainder[4..]);
+        return normalized;
+    }
+    if remainder.len() >= 3
+        && remainder[0] <= u8::MAX as u16
+        && (remainder[0] as u8).is_ascii_alphabetic()
+        && remainder[1] == b':' as u16
+        && (remainder[2] == b'\\' as u16 || remainder[2] == b'/' as u16)
+    {
+        return remainder.to_vec();
+    }
+    path.to_vec()
+}
+
+#[cfg(any(windows, test))]
+fn wide_prefix_eq_ascii(value: &[u16], prefix: &[u8]) -> bool {
+    value.len() >= prefix.len()
+        && value.iter().zip(prefix).all(|(&unit, expected)| {
+            unit <= u8::MAX as u16 && (unit as u8).eq_ignore_ascii_case(expected)
+        })
 }
 
 fn movie_collection(state: &AppState) -> Vec<Track> {
@@ -2763,6 +5111,7 @@ fn movie_sort_key(label: &str) -> &'static str {
 
 fn music_sort_key(label: &str) -> &'static str {
     match label {
+        "Disc / track" => "album",
         "Title A–Z" => "title",
         "Artist A–Z" => "artist",
         _ => "recent",
@@ -3662,7 +6011,11 @@ fn movie_card(
     CardSource {
         id: movie.id,
         title,
-        detail,
+        detail: if state.unavailable_media.contains(&movie.id) {
+            format!("Unavailable · {detail}")
+        } else {
+            detail
+        },
         genre: details
             .map(|details| details.genre.clone())
             .unwrap_or_default(),
@@ -3727,15 +6080,21 @@ fn music_rows(
             } else {
                 "—".into()
             };
+            let unavailable = state.unavailable_media.contains(&track.id);
             TrackRow {
                 id: track.id,
                 index: (offset + local_index) as i32,
                 playlist_position,
                 title: SharedString::from(track.title.as_str()),
-                detail: SharedString::from(detail),
+                detail: SharedString::from(if unavailable {
+                    format!("Unavailable · {detail}")
+                } else {
+                    detail
+                }),
                 genre: SharedString::from(nonempty(&details.genre, "—").unwrap_or("—")),
                 duration: SharedString::from(duration),
                 selected,
+                unavailable,
                 artwork: artwork.unwrap_or_default(),
                 has_artwork,
                 monogram: monogram(&track.title),
@@ -3758,15 +6117,21 @@ fn episode_rows(state: &mut AppState, tracks: &[Track], offset: usize) -> Vec<Tr
             let detail = info
                 .map(|e| format!("Season {} · Episode {}", e.season, e.episode))
                 .unwrap_or_else(|| movie.format.clone());
+            let unavailable = state.unavailable_media.contains(&movie.id);
             TrackRow {
                 id: movie.id,
                 index: (offset + local_index) as i32,
                 playlist_position: -1,
                 title: SharedString::from(movie.title.as_str()),
-                detail: SharedString::from(detail),
+                detail: SharedString::from(if unavailable {
+                    format!("Unavailable · {detail}")
+                } else {
+                    detail
+                }),
                 genre: SharedString::from(nonempty(&details.genre, "—").unwrap_or("—")),
                 duration: SharedString::from("—"),
                 selected: false,
+                unavailable,
                 artwork: artwork.unwrap_or_default(),
                 has_artwork,
                 monogram: monogram(&movie.title),
@@ -3806,6 +6171,140 @@ fn browse_rows(state: &mut AppState, sources: Vec<CardSource>) -> Vec<BrowseRow>
 }
 
 fn refresh_ui(ui: &AppWindow, state: &mut AppState, playback: &PlaybackSnapshot) {
+    update_model(
+        &state.watched_roots_model,
+        state
+            .watched_roots
+            .iter()
+            .enumerate()
+            .map(|(index, root)| WatchedRootRow {
+                index: index.min(i32::MAX as usize) as i32,
+                path: SharedString::from(root.display().to_string()),
+                status: SharedString::from(
+                    state
+                        .root_scan_status
+                        .get(&path_identity_key(root))
+                        .map(String::as_str)
+                        .unwrap_or("Watched"),
+                ),
+            })
+            .collect(),
+    );
+    ui.set_watched_roots(ModelRc::from(Rc::clone(&state.watched_roots_model)));
+    ui.set_media_controls_status(SharedString::from(state.media_controls_status.as_str()));
+    ui.set_equalizer_enabled(state.equalizer_settings.enabled);
+    update_model(
+        &state.equalizer_preset_model,
+        playback
+            .equalizer_presets
+            .iter()
+            .map(|preset| SharedString::from(preset.as_str()))
+            .collect(),
+    );
+    ui.set_equalizer_presets(ModelRc::from(Rc::clone(&state.equalizer_preset_model)));
+    ui.set_equalizer_preset(SharedString::from(
+        state
+            .equalizer_settings
+            .preset_index
+            .and_then(|index| playback.equalizer_presets.get(index))
+            .map(String::as_str)
+            .unwrap_or("Custom settings"),
+    ));
+    ui.set_equalizer_preamp_db(state.equalizer_settings.preamp_db);
+    ui.set_equalizer_preamp_label(SharedString::from(format!(
+        "{:.1} dB",
+        state.equalizer_settings.preamp_db
+    )));
+    update_model(
+        &state.equalizer_band_model,
+        playback
+            .equalizer_band_frequencies_hz
+            .iter()
+            .take(state.equalizer_settings.bands_db.len())
+            .enumerate()
+            .map(|(index, frequency)| crate::EqualizerBandRow {
+                index: index as i32,
+                frequency: SharedString::from(format_frequency(*frequency)),
+                gain: state.equalizer_settings.bands_db[index],
+                gain_label: SharedString::from(format!(
+                    "{:.1} dB",
+                    state.equalizer_settings.bands_db[index]
+                )),
+            })
+            .collect(),
+    );
+    ui.set_equalizer_bands(ModelRc::from(Rc::clone(&state.equalizer_band_model)));
+    ui.set_ab_repeat_label(SharedString::from(ab_repeat_label(playback)));
+    ui.set_can_set_ab_repeat(
+        playback.current_id.is_some() && playback.duration_ms > 0 && playback.runtime_available,
+    );
+    ui.set_has_ab_repeat(playback.ab_repeat.a_ms.is_some() || playback.ab_repeat.b_ms.is_some());
+    ui.set_sleep_timer_label(SharedString::from(sleep_timer_label(playback)));
+    ui.set_cast_address_input(SharedString::from(state.cast_address_input.as_str()));
+    ui.set_cast_target_label(SharedString::from(
+        playback.cast_target.as_deref().unwrap_or("Local output"),
+    ));
+    ui.set_bookmark_name_input(SharedString::from(state.bookmark_name_input.as_str()));
+    update_model(
+        &state.bookmark_model,
+        playback
+            .current_id
+            .into_iter()
+            .flat_map(|media_id| {
+                state
+                    .bookmarks
+                    .iter()
+                    .enumerate()
+                    .filter(move |(_, bookmark)| bookmark.media_id == media_id)
+            })
+            .map(|(index, bookmark)| crate::BookmarkRow {
+                index: index.min(i32::MAX as usize) as i32,
+                name: SharedString::from(bookmark.name.as_str()),
+                time: SharedString::from(format_time(bookmark.position_ms)),
+            })
+            .collect(),
+    );
+    ui.set_bookmarks(ModelRc::from(Rc::clone(&state.bookmark_model)));
+    ui.set_network_url_input(SharedString::from(state.network_url_input.as_str()));
+    update_model(
+        &state.network_history_model,
+        sorted_network_history_rows(state),
+    );
+    ui.set_network_history(ModelRc::from(Rc::clone(&state.network_history_model)));
+    update_model(
+        &state.subtitle_result_model,
+        state
+            .subtitle_results
+            .iter()
+            .enumerate()
+            .map(|(index, result)| crate::SubtitleResultRow {
+                index: index.min(i32::MAX as usize) as i32,
+                title: SharedString::from(if result.file_name.is_empty() {
+                    result.release.as_str()
+                } else {
+                    result.file_name.as_str()
+                }),
+                detail: SharedString::from(format!(
+                    "{}{}{}",
+                    result.language,
+                    if result.hearing_impaired {
+                        " · hearing impaired"
+                    } else {
+                        ""
+                    },
+                    result
+                        .download_count
+                        .map(|count| format!(" · {count} downloads"))
+                        .unwrap_or_default()
+                )),
+            })
+            .collect(),
+    );
+    ui.set_subtitle_results(ModelRc::from(Rc::clone(&state.subtitle_result_model)));
+    ui.set_subtitle_search_status(SharedString::from(state.subtitle_search_status.as_str()));
+    ui.set_subtitle_language_input(SharedString::from(state.subtitle_language_input.as_str()));
+    ui.set_opensubtitles_credentials_available(state.opensubtitles_credentials_available);
+    ui.set_opensubtitles_status(SharedString::from(state.opensubtitles_status.as_str()));
     let music_detail = state.open_music_group.is_some() || state.opened_playlist.is_some();
     let music_list_visible =
         state.current_view == "music" && (state.music_section == "tracks" || music_detail);
@@ -4103,11 +6602,21 @@ fn refresh_ui(ui: &AppWindow, state: &mut AppState, playback: &PlaybackSnapshot)
             .is_some_and(|movie| state.saved_movies.contains(&movie.id)),
     );
     ui.set_music_genre(SharedString::from(state.music_genre.as_str()));
-    ui.set_music_sort(SharedString::from(match state.music_sort.as_str() {
-        "title" => "Title A–Z",
-        "artist" => "Artist A–Z",
-        _ => "Recently added",
-    }));
+    ui.set_music_sort(SharedString::from(
+        if state.music_section == "albums"
+            && state.open_music_group.is_some()
+            && !state.music_sort_explicit
+        {
+            "Disc / track"
+        } else {
+            match state.music_sort.as_str() {
+                "album" => "Disc / track",
+                "title" => "Title A–Z",
+                "artist" => "Artist A–Z",
+                _ => "Recently added",
+            }
+        },
+    ));
     let result_count = if music_card_visible {
         music_source_count
     } else {
@@ -4187,6 +6696,12 @@ fn refresh_playback_ui(ui: &AppWindow, state: &mut AppState, playback: &Playback
     ui.set_runtime_message(SharedString::from(playback.runtime_message.as_str()));
     ui.set_has_current_track(playback.current_id.is_some());
     ui.set_playing_video(playback.current_is_video);
+    ui.set_can_return_to_video(can_return_to_video(playback));
+    ui.set_fullscreen_controls_visible(fullscreen_controls_visible(
+        playback,
+        state.fullscreen_activity_at,
+        Instant::now(),
+    ));
     ui.set_current_title(SharedString::from(if playback.current_title.is_empty() {
         "No track selected"
     } else {
@@ -4201,8 +6716,17 @@ fn refresh_playback_ui(ui: &AppWindow, state: &mut AppState, playback: &Playback
     ));
     ui.set_source_path(SharedString::from(
         source_track
-            .map(|track| track.path.display().to_string())
+            .map(|track| match &track.source {
+                TrackSource::Local => track.path.display().to_string(),
+                TrackSource::Network(url) => url.display_label(),
+            })
             .unwrap_or_default(),
+    ));
+    ui.set_source_kind(SharedString::from(
+        match source_track.map(|track| &track.source) {
+            Some(TrackSource::Network(_)) => "Network stream",
+            _ => "Local file",
+        },
     ));
     ui.set_source_format(SharedString::from(
         source_track
@@ -4247,13 +6771,17 @@ fn refresh_playback_ui(ui: &AppWindow, state: &mut AppState, playback: &Playback
         );
         state.rendered_queue_revision = playback.queue_revision;
     }
-    let current_changed = state.last_current_id != playback.current_id
-        || state.last_current_load_generation != playback.load_generation;
-    if current_changed {
-        state.last_current_id = playback.current_id;
-        state.last_current_load_generation = playback.load_generation;
-        state.audio_delay_input = format!("{}", playback.audio_delay_us / 1000);
-        state.subtitle_delay_input = format!("{}", playback.subtitle_delay_us / 1000);
+    if refresh_delay_drafts(state, playback) {
+        state.subtitle_results.clear();
+        state.subtitle_search_pending = None;
+        state.subtitle_search_status = if state.subtitle_download_pending.is_some() {
+            "Media changed. A pending download will be cached but not auto-attached.".into()
+        } else {
+            String::new()
+        };
+        update_model(&state.subtitle_result_model, Vec::new());
+        ui.set_subtitle_results(ModelRc::from(Rc::clone(&state.subtitle_result_model)));
+        ui.set_subtitle_search_status(SharedString::from(state.subtitle_search_status.as_str()));
         ui.set_audio_delay_input(SharedString::from(state.audio_delay_input.as_str()));
         ui.set_subtitle_delay_input(SharedString::from(state.subtitle_delay_input.as_str()));
     }
@@ -4286,6 +6814,18 @@ fn refresh_playback_ui(ui: &AppWindow, state: &mut AppState, playback: &Playback
         state.feedback.as_str(),
         playback,
     )));
+}
+
+fn refresh_delay_drafts(state: &mut AppState, playback: &PlaybackSnapshot) -> bool {
+    let current_changed = state.last_current_id != playback.current_id
+        || state.last_current_load_generation != playback.load_generation;
+    if current_changed {
+        state.last_current_id = playback.current_id;
+        state.last_current_load_generation = playback.load_generation;
+        state.audio_delay_input = format!("{}", playback.audio_delay_us / 1000);
+        state.subtitle_delay_input = format!("{}", playback.subtitle_delay_us / 1000);
+    }
+    current_changed
 }
 
 fn status_message<'a>(feedback: &'a str, playback: &'a PlaybackSnapshot) -> &'a str {
@@ -4339,6 +6879,29 @@ fn can_toggle_pause(playback: &PlaybackSnapshot) -> bool {
         )
 }
 
+fn can_return_to_video(playback: &PlaybackSnapshot) -> bool {
+    playback.current_id.is_some()
+        && playback.current_is_video
+        && matches!(
+            playback.state,
+            PlaybackUiState::Loading
+                | PlaybackUiState::Playing
+                | PlaybackUiState::Paused
+                | PlaybackUiState::Ended
+                | PlaybackUiState::Error
+        )
+}
+
+fn fullscreen_controls_visible(
+    playback: &PlaybackSnapshot,
+    activity_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    playback.state != PlaybackUiState::Playing
+        || activity_at
+            .is_none_or(|at| now.saturating_duration_since(at) < FULLSCREEN_CONTROLS_TIMEOUT)
+}
+
 fn refresh_track_choice_models(state: &AppState, playback: &PlaybackSnapshot) {
     update_model(
         &state.audio_model,
@@ -4379,20 +6942,34 @@ fn refresh_video_frame(
     ui: &AppWindow,
     frames: &FrameMailbox,
     displayed_generation: &Cell<u64>,
-    playing_video: bool,
+    playback: &PlaybackSnapshot,
+    picture_in_picture: &Rc<RefCell<Option<PictureInPictureWindow>>>,
+    displayed_frame: &Rc<RefCell<Option<DisplayedVideoFrame>>>,
 ) {
     let generation = frames.generation();
     if displayed_generation.get() != generation {
         displayed_generation.set(generation);
         ui.set_video_frame(Image::default());
         ui.set_has_video_frame(false);
+        displayed_frame.borrow_mut().take();
+        if let Some(pip) = picture_in_picture.borrow().as_ref() {
+            pip.set_video_frame(Image::default());
+            pip.set_has_video_frame(false);
+        }
     }
 
-    if !playing_video {
+    if !playback.current_is_video {
         if ui.get_has_video_frame() {
             ui.set_video_frame(Image::default());
             ui.set_has_video_frame(false);
         }
+        displayed_frame.borrow_mut().take();
+        if let Some(pip) = picture_in_picture.borrow().as_ref() {
+            let _ = pip.hide();
+            pip.set_video_frame(Image::default());
+            pip.set_has_video_frame(false);
+        }
+        ui.set_picture_in_picture_open(false);
         return;
     }
 
@@ -4405,7 +6982,23 @@ fn refresh_video_frame(
             );
             ui.set_video_frame(Image::from_rgba8(buffer));
             ui.set_has_video_frame(true);
+            *displayed_frame.borrow_mut() = Some(DisplayedVideoFrame {
+                width: frame.width,
+                height: frame.height,
+                rgba: pixels.into(),
+            });
+            if let Some(pip) = picture_in_picture.borrow().as_ref() {
+                pip.set_video_frame(ui.get_video_frame());
+                pip.set_has_video_frame(true);
+            }
         }
+    }
+
+    if let Some(pip) = picture_in_picture.borrow().as_ref() {
+        pip.set_current_title(SharedString::from(playback.current_title.as_str()));
+        pip.set_player_state(SharedString::from(playback.state.label()));
+        pip.set_can_toggle_pause(can_toggle_pause(playback));
+        pip.set_is_paused(playback.state == PlaybackUiState::Paused);
     }
 }
 
@@ -4421,12 +7014,75 @@ fn format_time(milliseconds: i64) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
+fn format_frequency(frequency_hz: f32) -> String {
+    if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+        "Frequency unavailable".into()
+    } else if frequency_hz >= 1000.0 {
+        format!("{:.1} kHz", frequency_hz / 1000.0)
+    } else {
+        format!("{frequency_hz:.0} Hz")
+    }
+}
+
+fn ab_repeat_label(playback: &PlaybackSnapshot) -> String {
+    match (playback.ab_repeat.a_ms, playback.ab_repeat.b_ms) {
+        (Some(a_ms), Some(b_ms)) if b_ms > a_ms => {
+            format!("A {} · B {}", format_time(a_ms), format_time(b_ms))
+        }
+        (Some(a_ms), Some(_)) => {
+            format!("A {} · B needs to follow A", format_time(a_ms))
+        }
+        (Some(a_ms), None) => format!("A {} · Set B", format_time(a_ms)),
+        (None, Some(b_ms)) => format!("B {} · Set A", format_time(b_ms)),
+        (None, None) => "A/B loop off".into(),
+    }
+}
+
+fn sleep_timer_label(playback: &PlaybackSnapshot) -> String {
+    playback
+        .sleep_timer_remaining_ms
+        .map(|remaining| format!("Sleep timer · {} remaining", format_time(remaining as i64)))
+        .unwrap_or_else(|| "Sleep timer off".into())
+}
+
+fn sorted_network_history_rows(state: &AppState) -> Vec<crate::NetworkHistoryRow> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default();
+    let mut history = state.network_history.iter().enumerate().collect::<Vec<_>>();
+    history.sort_by_key(|(_, entry)| std::cmp::Reverse(entry.last_played_at));
+    history
+        .into_iter()
+        .map(|(index, entry)| crate::NetworkHistoryRow {
+            index: index.min(i32::MAX as usize) as i32,
+            title: SharedString::from(entry.title.as_str()),
+            address: SharedString::from(entry.url.display_label()),
+            played: SharedString::from(relative_time(now, entry.last_played_at)),
+        })
+        .collect()
+}
+
+fn relative_time(now: i64, then: i64) -> String {
+    let age = now.saturating_sub(then).max(0);
+    if age < 60 {
+        "Just now".into()
+    } else if age < 3600 {
+        format!("{} min ago", age / 60)
+    } else if age < 86_400 {
+        format!("{} hr ago", age / 3600)
+    } else {
+        format!("{} d ago", age / 86_400)
+    }
+}
+
 fn movie_from_path(id: TrackId, path: std::path::PathBuf) -> Option<Track> {
     if !path.is_file() || !is_movie_path(&path) {
         return None;
     }
 
     Some(Track {
+        source: TrackSource::Local,
         id,
         title: readable_filename(&path),
         path,
@@ -4437,32 +7093,224 @@ fn movie_from_path(id: TrackId, path: std::path::PathBuf) -> Option<Track> {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_paths, apply_artwork_result, apply_automatic_artwork_result, apply_metadata_result,
-        can_resume, can_toggle_pause, collection_start_index, collection_track_at,
-        control_resolution, flush_pending_metadata, library_snapshot, movie_double_click,
-        movie_from_path, music_collection, next_artwork_intent, pending_seek_matches_playback,
-        play_collection, playlist_collection, playlist_filtered_positions, playlist_move_target,
+        add_paths, add_watched_root, apply_artwork_result, apply_automatic_artwork_result,
+        apply_metadata_result, apply_scan_result, bookmark_name, can_resume, can_toggle_pause,
+        collection_start_index, collection_starts_movie, collection_track_at, control_resolution,
+        flush_pending_metadata, import_m3u8_into_state, library_snapshot,
+        media_control_pause_change_needed, movie_double_click, movie_from_path, music_collection,
+        next_artwork_intent, path_identity_key, pending_seek_matches_playback, play_collection,
+        playlist_collection, playlist_filtered_positions, playlist_move_target,
         playlist_owner_for_queue, playlist_row_is_current, queue_automatic_artwork_retry,
-        queue_position_label, refresh_track_choice_models, schedule_automatic_artwork,
-        seek_commit_target, selected_displayed_tracks, set_movie_artwork_target, sort_music_tracks,
-        status_message, AppState, ControlResolution, PendingSeek, MOVIE_DETAILS_CLICK_DELAY,
-        TRANSPORT_ACK_TIMEOUT,
+        queue_position_label, reconcile_equalizer_settings, refresh_delay_drafts,
+        refresh_track_choice_models, remove_watched_root, restore_queue_tracks,
+        schedule_automatic_artwork, seek_commit_target, selected_displayed_tracks,
+        set_movie_artwork_target, sort_music_tracks, status_message, update_network_history,
+        update_queue_checkpoint, wide_prefix_eq_ascii, windows_path_identity_units, AppState,
+        ControlResolution, PendingSeek, MOVIE_DETAILS_CLICK_DELAY, TRANSPORT_ACK_TIMEOUT,
     };
     use crate::metadata::{ArtworkKind, ArtworkRequest, LocalMetadata};
-    use crate::model::{MediaDetails, Track};
+    use crate::model::{MediaDetails, Track, TrackSource};
+    use crate::playback::queue::{QueueCheckpoint, RepeatMode};
     use crate::playback::{
-        is_movie, ControlAcknowledgement, PlaybackCommand, PlaybackSnapshot, PlaybackTrack,
-        PlaybackUiState,
+        is_movie, ControlAcknowledgement, EqualizerSettings, PlaybackCommand, PlaybackSnapshot,
+        PlaybackTrack, PlaybackUiState,
     };
     use crate::playlists::{Playlist, PlaylistCollection};
-    use crate::storage::Progress;
+    use crate::storage::{LibraryStore, Progress};
     use slint::{Model, ModelRc, SharedString, VecModel};
-    use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::cell::RefCell;
+    use std::collections::{HashMap, VecDeque};
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(windows)]
+    fn windows_verbatim_path(path: &Path) -> PathBuf {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let normal =
+            windows_path_identity_units(&path.as_os_str().encode_wide().collect::<Vec<_>>());
+        let mut verbatim = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16].to_vec();
+        verbatim.extend(normal);
+        PathBuf::from(std::ffi::OsString::from_wide(&verbatim))
+    }
+
+    #[test]
+    fn windows_path_identity_helper_normalizes_drive_and_unc_prefixes_without_case_folding() {
+        let wide = |value: &str| value.encode_utf16().collect::<Vec<_>>();
+        assert_eq!(
+            windows_path_identity_units(&wide(r"\\?\C:\Media\Movie.mp4")),
+            wide(r"C:\Media\Movie.mp4")
+        );
+        assert_eq!(
+            windows_path_identity_units(&wide(r"\\?\UNC\Server\Share\Media\Movie.mp4")),
+            wide(r"\\Server\Share\Media\Movie.mp4")
+        );
+        assert!(wide_prefix_eq_ascii(&wide("unc\\server"), b"UNC\\"));
+        let volume = wide(r"\\?\Volume{01234567-89AB-CDEF-0123-456789ABCDEF}\Media");
+        assert_eq!(windows_path_identity_units(&volume), volume);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_identity_matches_verbatim_drive_paths_and_keeps_component_case() {
+        let ordinary = Path::new(r"C:\Library\Album\Track.flac");
+        let verbatim = Path::new(r"\\?\C:\Library\Album\Track.flac");
+        assert_eq!(path_identity_key(ordinary), path_identity_key(verbatim));
+        assert_eq!(
+            path_identity_key(Path::new(r"\\Server\Share\Album\Track.flac")),
+            path_identity_key(Path::new(r"\\?\UNC\Server\Share\Album\Track.flac"))
+        );
+        assert_ne!(
+            path_identity_key(ordinary),
+            path_identity_key(Path::new(r"C:\library\Album\Track.flac"))
+        );
+    }
+
+    #[test]
+    fn media_control_play_pause_requests_are_idempotent_and_resume_restored_queue() {
+        let playing = PlaybackSnapshot {
+            current_id: Some(4),
+            queue_len: 1,
+            state: PlaybackUiState::Playing,
+            ..PlaybackSnapshot::default()
+        };
+        assert!(media_control_pause_change_needed(&playing, true));
+        assert!(media_control_pause_change_needed(&playing, false));
+
+        let paused = PlaybackSnapshot {
+            state: PlaybackUiState::Paused,
+            ..playing.clone()
+        };
+        assert!(media_control_pause_change_needed(&paused, true));
+        assert!(media_control_pause_change_needed(&paused, false));
+
+        let restored = PlaybackSnapshot {
+            current_id: None,
+            queue_len: 1,
+            queue_restored: true,
+            state: PlaybackUiState::Idle,
+            ..PlaybackSnapshot::default()
+        };
+        assert!(media_control_pause_change_needed(&restored, false));
+        assert!(media_control_pause_change_needed(&restored, true));
+    }
+
+    #[test]
+    fn bookmark_names_match_storage_byte_and_control_limits() {
+        let max_name = "é".repeat(64);
+        assert_eq!(bookmark_name(&max_name, 0).unwrap().len(), 128);
+        assert!(bookmark_name(&"é".repeat(65), 0).is_err());
+        assert!(bookmark_name("name\n", 0).is_err());
+        assert!(bookmark_name("\tname", 0).is_err());
+        assert!(bookmark_name("   ", 0).unwrap().starts_with("Point at "));
+    }
+
+    #[test]
+    fn network_history_sanitizes_title_and_reopens_without_changing_signed_url() {
+        let url = format!(
+            "https://radio.example.test/{}/https%3A%2F%2F%0A?token=private",
+            "long-segment".repeat(40),
+        );
+        let track = Track::from_network_url(41, &url).unwrap();
+        let actual_url = match &track.source {
+            TrackSource::Network(url) => url.clone(),
+            TrackSource::Local => unreachable!(),
+        };
+        let mut state = AppState {
+            movies: vec![track],
+            ..AppState::default()
+        };
+        let playback = PlaybackSnapshot {
+            current_id: Some(41),
+            load_generation: 1,
+            state: PlaybackUiState::Loading,
+            ..PlaybackSnapshot::default()
+        };
+        assert!(update_network_history(&mut state, &playback));
+        assert_eq!(state.network_history[0].title, "Network stream");
+        assert!(state.network_history[0].title.len() <= 256);
+        assert!(!state.network_history[0].title.chars().any(char::is_control));
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rust-vlc-network-history-{unique}.sqlite3"));
+        let mut store = LibraryStore::open(&path).unwrap();
+        store.save(&library_snapshot(&state)).unwrap();
+        drop(store);
+        let store = LibraryStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.network_history[0].title, "Network stream");
+        assert_eq!(loaded.network_history[0].url.as_str(), actual_url.as_str());
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn imported_m3u8_mixed_media_is_visible_and_playable_in_playlist_order() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("rust-vlc-m3u8-mixed-{unique}"));
+        std::fs::create_dir_all(&directory).expect("create M3U8 fixture directory");
+        let audio_path = directory.join("song.mp3");
+        let video_path = directory.join("movie.mkv");
+        let playlist_path = directory.join("mixed.m3u8");
+        std::fs::write(&audio_path, b"audio fixture").expect("write audio fixture");
+        std::fs::write(&video_path, b"video fixture").expect("write video fixture");
+        std::fs::write(
+            &playlist_path,
+            b"#EXTM3U\nsong.mp3\nmovie.mkv\nhttps://radio.example.test/live\nmovie.mkv\n",
+        )
+        .expect("write M3U8 fixture");
+        let mut state = AppState {
+            tracks: vec![Track::from_path(1, audio_path).unwrap()],
+            movies: vec![movie_from_path(2, video_path).unwrap()],
+            next_id: 3,
+            ..AppState::default()
+        };
+
+        import_m3u8_into_state(&mut state, &playlist_path).unwrap();
+        let playlist_id = state.opened_playlist.unwrap();
+        let displayed = playlist_collection(&state, playlist_id, "");
+        let ids = displayed.iter().map(|track| track.id).collect::<Vec<_>>();
+        assert_eq!(ids, [1, 2, 3, 2]);
+        assert!(!collection_starts_movie(&displayed, 0));
+        assert!(collection_starts_movie(&displayed, 3));
+        assert_eq!(
+            playlist_filtered_positions(&state, playlist_id, ""),
+            [0, 1, 2, 3]
+        );
+        state.visible_tracks = displayed.clone();
+        state.visible_playlist_positions = vec![0, 1, 2, 3];
+        assert!(playlist_row_is_current(&state, playlist_id, 3, 3, 2));
+        assert_eq!(music_collection(&state), displayed);
+
+        let queue = music_collection(&state);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let snapshot = Arc::new(Mutex::new(PlaybackSnapshot::default()));
+        assert!(play_collection(
+            &mut state, &sender, &snapshot, queue, 3, None
+        ));
+        match receiver.try_recv().unwrap() {
+            PlaybackCommand::PlayQueue {
+                tracks,
+                start_index,
+                ..
+            } => {
+                assert_eq!(start_index, 3);
+                assert_eq!(tracks.iter().map(|track| track.id).collect::<Vec<_>>(), ids);
+                assert_eq!(tracks[2].format, "STREAM");
+            }
+            _ => panic!("playlist row should submit the displayed collection queue"),
+        }
+        std::fs::remove_dir_all(directory).expect("remove M3U8 fixture directory");
+    }
 
     #[test]
     fn repeated_model_bindings_keep_identity_after_incremental_row_updates() {
@@ -4478,8 +7326,413 @@ mod tests {
     }
 
     #[test]
+    fn delay_drafts_survive_same_load_snapshot_refresh() {
+        let mut state = AppState {
+            last_current_id: Some(7),
+            last_current_load_generation: 3,
+            audio_delay_input: "125".into(),
+            subtitle_delay_input: "-250".into(),
+            ..AppState::default()
+        };
+        let playback = PlaybackSnapshot {
+            current_id: Some(7),
+            load_generation: 3,
+            audio_delay_us: 0,
+            subtitle_delay_us: 0,
+            ..PlaybackSnapshot::default()
+        };
+
+        assert!(!refresh_delay_drafts(&mut state, &playback));
+        assert_eq!(state.audio_delay_input, "125");
+        assert_eq!(state.subtitle_delay_input, "-250");
+    }
+
+    #[test]
+    fn startup_snapshot_default_does_not_replace_saved_equalizer_settings() {
+        let saved = EqualizerSettings {
+            enabled: true,
+            preamp_db: 3.5,
+            bands_db: [1.0, 2.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0],
+            preset_index: None,
+        };
+        let mut state = AppState {
+            equalizer_settings: saved,
+            equalizer_settings_pending: true,
+            ..AppState::default()
+        };
+        let playback = PlaybackSnapshot::default();
+
+        assert!(!reconcile_equalizer_settings(&mut state, &playback));
+        assert_eq!(state.equalizer_settings, saved);
+        assert_eq!(library_snapshot(&state).equalizer_settings, saved);
+    }
+
+    #[test]
+    fn return_to_video_only_restores_fullscreen_for_current_video() {
+        let ui = crate::AppWindow::new().expect("create test window");
+        let checkpoint = QueueCheckpoint {
+            entry_ids: vec![3, 4],
+            order: vec![0, 1],
+            position: Some(0),
+            repeat_mode: RepeatMode::All,
+            shuffle: true,
+            position_ms: 12_000,
+            ..QueueCheckpoint::default()
+        };
+        let snapshot = Arc::new(Mutex::new(PlaybackSnapshot {
+            current_id: Some(3),
+            load_generation: 8,
+            current_is_video: true,
+            current_title: "Movie".into(),
+            state: PlaybackUiState::Paused,
+            queue_index: 1,
+            queue_len: 2,
+            queue_titles: vec!["Movie".into(), "Next".into()],
+            queue_revision: 7,
+            queue_checkpoint: checkpoint.clone(),
+            queue_restored: true,
+            position_ms: 12_000,
+            duration_ms: 60_000,
+            audio_tracks: vec![PlaybackTrack {
+                id: 5,
+                name: "English".into(),
+            }],
+            subtitle_tracks: vec![PlaybackTrack {
+                id: 6,
+                name: "English subtitles".into(),
+            }],
+            audio_track: 5,
+            subtitle_track: 6,
+            audio_delay_us: 125_000,
+            subtitle_delay_us: -250_000,
+            ..PlaybackSnapshot::default()
+        }));
+        let state = Rc::new(RefCell::new(AppState::default()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+
+        super::wire_library_ui(&ui, &state, &sender, &snapshot);
+        ui.invoke_return_to_video();
+
+        assert!(ui.get_movie_fullscreen());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        let playback = snapshot.lock().unwrap();
+        assert_eq!(playback.load_generation, 8);
+        assert_eq!(playback.queue_checkpoint, checkpoint);
+        assert_eq!(playback.position_ms, 12_000);
+        assert_eq!(playback.audio_track, 5);
+        assert_eq!(playback.subtitle_track, 6);
+        assert_eq!(playback.audio_delay_us, 125_000);
+        assert_eq!(playback.subtitle_delay_us, -250_000);
+    }
+
+    #[test]
+    fn fullscreen_controls_hide_only_after_playing_inactivity_timeout() {
+        let now = Instant::now();
+        let playing = PlaybackSnapshot {
+            state: PlaybackUiState::Playing,
+            ..PlaybackSnapshot::default()
+        };
+        let inactive_since = Some(now - super::FULLSCREEN_CONTROLS_TIMEOUT);
+
+        assert!(super::fullscreen_controls_visible(&playing, None, now));
+        assert!(super::fullscreen_controls_visible(
+            &playing,
+            Some(now - Duration::from_millis(500)),
+            now,
+        ));
+        assert!(!super::fullscreen_controls_visible(
+            &playing,
+            inactive_since,
+            now,
+        ));
+
+        for state in [PlaybackUiState::Paused, PlaybackUiState::Error] {
+            let playback = PlaybackSnapshot {
+                state,
+                ..PlaybackSnapshot::default()
+            };
+            assert!(super::fullscreen_controls_visible(
+                &playback,
+                inactive_since,
+                now,
+            ));
+        }
+    }
+
+    #[test]
+    fn startup_snapshot_does_not_replace_saved_queue_before_restore() {
+        let checkpoint = QueueCheckpoint {
+            entry_ids: vec![4, 4, 9],
+            order: vec![2, 0, 1],
+            position: Some(1),
+            wrapped_from_end: false,
+            repeat_mode: RepeatMode::All,
+            shuffle: true,
+            position_ms: 12_345,
+        };
+        let mut state = AppState {
+            queue_checkpoint: checkpoint.clone(),
+            ..AppState::default()
+        };
+
+        assert!(!update_queue_checkpoint(
+            &mut state,
+            &PlaybackSnapshot::default(),
+            true,
+        ));
+        assert_eq!(state.queue_checkpoint, checkpoint);
+        assert_eq!(library_snapshot(&state).queue_checkpoint, checkpoint);
+    }
+
+    #[test]
+    fn restored_queue_keeps_duplicate_track_occurrences() {
+        let track = Track {
+            source: TrackSource::Local,
+            id: 4,
+            path: PathBuf::from("track.mp3"),
+            title: "Track".into(),
+            format: "MP3".into(),
+        };
+        let state = AppState {
+            tracks: vec![track],
+            ..AppState::default()
+        };
+        let checkpoint = QueueCheckpoint {
+            entry_ids: vec![4, 4],
+            order: vec![1, 0],
+            position: Some(0),
+            ..QueueCheckpoint::default()
+        };
+
+        assert_eq!(
+            restore_queue_tracks(&state, &checkpoint)
+                .iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>(),
+            [4, 4]
+        );
+    }
+
+    #[test]
+    fn watched_overlapping_roots_do_not_duplicate_library_entries() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rust-vlc-roots-{unique}"));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).expect("create nested root");
+        let audio = root.join("audio.mp3");
+        let video = nested.join("video.mkv");
+        std::fs::write(&audio, b"audio fixture").expect("write audio fixture");
+        std::fs::write(&video, b"video fixture").expect("write video fixture");
+        let root = root.canonicalize().expect("canonicalize root");
+        let nested = nested.canonicalize().expect("canonicalize nested root");
+        let mut state = AppState::default();
+
+        assert!(add_watched_root(&mut state, root.clone()).unwrap());
+        assert!(!add_watched_root(&mut state, root.clone()).unwrap());
+        assert!(add_watched_root(&mut state, nested.clone()).unwrap());
+        assert_eq!(state.pending_root_scans.len(), 2);
+
+        let parent_scan = crate::scan::scan_directory(&root);
+        apply_scan_result(&mut state, root.clone(), parent_scan);
+        let nested_scan = crate::scan::scan_directory(&nested);
+        apply_scan_result(&mut state, nested, nested_scan);
+
+        assert_eq!(state.tracks.len(), 1);
+        assert_eq!(state.movies.len(), 1);
+        assert!(audio.is_file());
+        assert!(video.is_file());
+        std::fs::remove_dir_all(root).expect("remove root fixture");
+    }
+
+    #[test]
+    fn removing_watched_root_keeps_library_history_playlist_and_source_media() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rust-vlc-remove-root-{unique}"));
+        std::fs::create_dir_all(&root).expect("create root fixture");
+        let path = root.join("song.mp3");
+        std::fs::write(&path, b"audio fixture").expect("write audio fixture");
+        let track = Track {
+            source: TrackSource::Local,
+            id: 1,
+            path: path.clone(),
+            title: "Song".into(),
+            format: "MP3".into(),
+        };
+        let mut state = AppState {
+            tracks: vec![track],
+            watched_roots: vec![root.clone()],
+            pending_root_scans: VecDeque::from([root.clone()]),
+            ..AppState::default()
+        };
+        state.progress.insert(
+            1,
+            Progress {
+                media_id: 1,
+                position_ms: 1_000,
+                duration_ms: 3_000,
+                completed: false,
+            },
+        );
+        state.playlists = PlaylistCollection::restore(
+            vec![Playlist {
+                id: 7,
+                name: "Saved".into(),
+                track_ids: vec![1],
+            }],
+            Some(7),
+        );
+
+        assert_eq!(remove_watched_root(&mut state, 0), Some(root.clone()));
+        assert!(state.watched_roots.is_empty());
+        assert!(state.pending_root_scans.is_empty());
+        assert_eq!(state.tracks.len(), 1);
+        assert_eq!(state.progress[&1].position_ms, 1_000);
+        assert_eq!(state.playlists.playlists()[0].track_ids, [1]);
+        assert!(path.is_file());
+        std::fs::remove_dir_all(root).expect("remove root fixture");
+    }
+
+    #[test]
+    fn incomplete_root_scan_keeps_entries_but_complete_scan_marks_missing_media() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rust-vlc-offline-root-{unique}"));
+        std::fs::create_dir_all(&root).expect("create root fixture");
+        let path = root.join("missing.mp4");
+        let mut state = AppState {
+            movies: vec![Track {
+                source: TrackSource::Local,
+                id: 2,
+                path,
+                title: "Missing".into(),
+                format: "MOVIE".into(),
+            }],
+            watched_roots: vec![root.clone()],
+            ..AppState::default()
+        };
+        state.progress.insert(
+            2,
+            Progress {
+                media_id: 2,
+                position_ms: 7_000,
+                duration_ms: 20_000,
+                completed: false,
+            },
+        );
+
+        apply_scan_result(
+            &mut state,
+            root.clone(),
+            crate::scan::ScanOutcome {
+                warnings: vec!["The root is temporarily unavailable.".into()],
+                complete: false,
+                ..crate::scan::ScanOutcome::default()
+            },
+        );
+        assert!(!state.unavailable_media.contains(&2));
+        assert_eq!(state.progress[&2].position_ms, 7_000);
+
+        apply_scan_result(
+            &mut state,
+            root.clone(),
+            crate::scan::ScanOutcome {
+                complete: true,
+                ..crate::scan::ScanOutcome::default()
+            },
+        );
+        assert!(state.unavailable_media.contains(&2));
+        assert_eq!(state.movies.len(), 1);
+        assert_eq!(state.progress[&2].position_ms, 7_000);
+        std::fs::remove_dir_all(root).expect("remove root fixture");
+    }
+
+    #[test]
+    fn watched_scan_requeues_metadata_when_an_existing_file_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "rust-vlc-fingerprint-refresh-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create root fixture");
+        let path = root.join("movie.mp4");
+        std::fs::write(&path, b"changed movie bytes").expect("write fixture");
+        #[cfg(windows)]
+        let scan_root = windows_verbatim_path(&root);
+        #[cfg(not(windows))]
+        let scan_root = root.clone();
+        #[cfg(windows)]
+        let scan_path = windows_verbatim_path(&path);
+        #[cfg(not(windows))]
+        let scan_path = path.clone();
+        let mut state = AppState {
+            movies: vec![Track {
+                source: TrackSource::Local,
+                id: 41,
+                path: path.clone(),
+                title: "Movie".into(),
+                format: "MP4".into(),
+            }],
+            watched_roots: vec![root.clone()],
+            ..AppState::default()
+        };
+        assert_eq!(path_identity_key(&path), path_identity_key(&scan_path));
+        state.file_fingerprints.insert(
+            path_identity_key(&path),
+            crate::scan::FileFingerprint {
+                path: path.clone(),
+                size: 5,
+                modified: Some(UNIX_EPOCH),
+            },
+        );
+        assert!(!add_watched_root(&mut state, scan_root.clone()).unwrap());
+        assert_eq!(state.watched_roots.len(), 1);
+
+        apply_scan_result(
+            &mut state,
+            scan_root,
+            crate::scan::ScanOutcome {
+                paths: vec![scan_path.clone()],
+                fingerprints: vec![crate::scan::FileFingerprint {
+                    path: scan_path,
+                    size: 19,
+                    modified: None,
+                }],
+                complete: true,
+                ..crate::scan::ScanOutcome::default()
+            },
+        );
+
+        assert_eq!(state.pending_metadata, VecDeque::from([41]));
+        assert_eq!(state.movies.len(), 1);
+        assert!(!state.unavailable_media.contains(&41));
+        assert_eq!(
+            state
+                .root_scan_status
+                .get(&path_identity_key(&root))
+                .map(String::as_str),
+            Some("Scanned · 1 media files")
+        );
+        std::fs::remove_dir_all(root).expect("remove root fixture");
+    }
+
+    #[test]
     fn movie_resume_position_travels_with_the_queue_command() {
         let movie = Track {
+            source: TrackSource::Local,
             id: 1,
             path: PathBuf::from("movie.mp4"),
             title: "Movie".into(),
@@ -4745,12 +7998,14 @@ mod tests {
     #[test]
     fn play_next_requires_the_current_displayed_collection_row() {
         let first = Track {
+            source: TrackSource::Local,
             id: 1,
             path: PathBuf::from("first.mp3"),
             title: "First".into(),
             format: "MP3".into(),
         };
         let second = Track {
+            source: TrackSource::Local,
             id: 2,
             path: PathBuf::from("second.mp3"),
             title: "Second".into(),
@@ -4807,6 +8062,7 @@ mod tests {
     #[test]
     fn movie_artwork_target_must_be_a_current_movie() {
         let current_movie = Track {
+            source: TrackSource::Local,
             id: 4,
             path: PathBuf::from("current.mkv"),
             title: "Current".into(),
@@ -4851,12 +8107,14 @@ mod tests {
     fn displayed_playlist_selects_duplicate_occurrences_independently_and_keeps_play_order() {
         let tracks = vec![
             Track {
+                source: TrackSource::Local,
                 id: 1,
                 path: PathBuf::from("one.mp3"),
                 title: "One".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: TrackSource::Local,
                 id: 2,
                 path: PathBuf::from("two.mp3"),
                 title: "Two".into(),
@@ -4908,12 +8166,14 @@ mod tests {
     fn filtered_duplicate_playlist_rows_keep_underlying_positions_for_edits() {
         let tracks = vec![
             Track {
+                source: TrackSource::Local,
                 id: 1,
                 path: PathBuf::from("one.mp3"),
                 title: "One".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: TrackSource::Local,
                 id: 2,
                 path: PathBuf::from("two.mp3"),
                 title: "Two".into(),
@@ -4950,12 +8210,14 @@ mod tests {
     #[test]
     fn filtered_playlist_rows_on_later_pages_keep_their_occurrence_positions() {
         let one = Track {
+            source: TrackSource::Local,
             id: 1,
             path: PathBuf::from("one.mp3"),
             title: "One".into(),
             format: "MP3".into(),
         };
         let two = Track {
+            source: TrackSource::Local,
             id: 2,
             path: PathBuf::from("two.mp3"),
             title: "Two".into(),
@@ -4998,12 +8260,14 @@ mod tests {
     fn active_playlist_owner_requires_an_exact_displayed_collection() {
         let tracks = vec![
             Track {
+                source: TrackSource::Local,
                 id: 1,
                 path: PathBuf::from("one.mp3"),
                 title: "One".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: TrackSource::Local,
                 id: 2,
                 path: PathBuf::from("two.mp3"),
                 title: "Two".into(),
@@ -5099,6 +8363,7 @@ mod tests {
     #[test]
     fn automatic_music_artwork_requires_matching_current_tags_and_no_local_art() {
         let track = Track {
+            source: TrackSource::Local,
             id: 5,
             path: PathBuf::from("song.mp3"),
             title: "Song title".into(),
@@ -5178,12 +8443,14 @@ mod tests {
         let mut state = AppState {
             tracks: vec![
                 Track {
+                    source: TrackSource::Local,
                     id: 1,
                     path: PathBuf::from("first.mp3"),
                     title: "First".into(),
                     format: "MP3".into(),
                 },
                 Track {
+                    source: TrackSource::Local,
                     id: 2,
                     path: PathBuf::from("second.mp3"),
                     title: "Second".into(),
@@ -5211,12 +8478,14 @@ mod tests {
         let mut state = AppState {
             tracks: vec![
                 Track {
+                    source: TrackSource::Local,
                     id: 1,
                     path: PathBuf::from("first.mp3"),
                     title: "First".into(),
                     format: "MP3".into(),
                 },
                 Track {
+                    source: TrackSource::Local,
                     id: 2,
                     path: PathBuf::from("second.mp3"),
                     title: "Second".into(),
@@ -5237,21 +8506,91 @@ mod tests {
     }
 
     #[test]
+    fn opened_album_defaults_to_disc_track_order_and_honors_explicit_sort() {
+        let tracks = vec![
+            Track {
+                source: TrackSource::Local,
+                id: 1,
+                path: PathBuf::from("one.mp3"),
+                title: "C track".into(),
+                format: "MP3".into(),
+            },
+            Track {
+                source: TrackSource::Local,
+                id: 2,
+                path: PathBuf::from("two.mp3"),
+                title: "A track".into(),
+                format: "MP3".into(),
+            },
+            Track {
+                source: TrackSource::Local,
+                id: 3,
+                path: PathBuf::from("three.mp3"),
+                title: "B track".into(),
+                format: "MP3".into(),
+            },
+        ];
+        let mut state = AppState {
+            tracks,
+            music_section: "albums".into(),
+            open_music_group: Some(1),
+            music_sort: "recent".into(),
+            ..AppState::default()
+        };
+        state.details = [(1, 1), (2, 2), (3, 3)]
+            .into_iter()
+            .map(|(id, number)| {
+                (
+                    id,
+                    MediaDetails {
+                        album: "Album".into(),
+                        artist: "Artist".into(),
+                        disc_number: Some(1),
+                        track_number: Some(number),
+                        ..MediaDetails::default()
+                    },
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            music_collection(&state)
+                .iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+
+        state.music_sort = "title".into();
+        state.music_sort_explicit = true;
+        assert_eq!(
+            music_collection(&state)
+                .iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>(),
+            [2, 3, 1]
+        );
+    }
+
+    #[test]
     fn artist_sort_uses_the_displayed_artist_and_open_groups_keep_requested_order() {
         let tracks = vec![
             Track {
+                source: TrackSource::Local,
                 id: 1,
                 path: PathBuf::from("zulu.mp3"),
                 title: "Zulu song".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: TrackSource::Local,
                 id: 2,
                 path: PathBuf::from("alpha.mp3"),
                 title: "Alpha song".into(),
                 format: "MP3".into(),
             },
             Track {
+                source: TrackSource::Local,
                 id: 3,
                 path: PathBuf::from("beta.mp3"),
                 title: "Beta song".into(),

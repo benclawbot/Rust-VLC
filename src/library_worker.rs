@@ -12,19 +12,42 @@ pub enum LibraryJob {
     Scan(PathBuf),
     ReadMetadata(Vec<(i32, PathBuf)>),
     Artwork(i32, u64, ArtworkRequest),
+    SearchSubtitles {
+        request_id: u64,
+        query: String,
+        languages: Vec<String>,
+    },
+    DownloadSubtitle {
+        request_id: u64,
+        file_id: i32,
+    },
     Shutdown,
 }
 
 pub enum LibraryEvent {
-    Scanned(ScanOutcome),
+    Scanned(PathBuf, ScanOutcome),
     Metadata(i32, Result<LocalMetadata, String>),
     Artwork(i32, u64, Result<Option<PathBuf>, String>),
     AutomaticArtwork(i32, ArtworkRequest, Result<Option<PathBuf>, String>),
+    SubtitlesFound(
+        u64,
+        Result<Vec<crate::subtitles::SubtitleSearchResult>, String>,
+    ),
+    SubtitleDownloaded(u64, Result<PathBuf, String>),
 }
 
 enum ArtworkJob {
     Manual(i32, u64, ArtworkRequest),
     Automatic(i32, ArtworkRequest),
+    SearchSubtitles {
+        request_id: u64,
+        query: String,
+        languages: Vec<String>,
+    },
+    DownloadSubtitle {
+        request_id: u64,
+        file_id: i32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,7 +60,7 @@ impl QueueSubmitError {
     pub fn message(self) -> &'static str {
         match self {
             Self::Full => {
-                "The library worker is busy. Try again after the current import or artwork lookup."
+                "The library worker is busy. Try again after the current import or lookup finishes."
             }
             Self::Stopped => "The library worker stopped. Restart the application.",
         }
@@ -101,6 +124,29 @@ impl LibraryWorker {
                             );
                             LibraryEvent::AutomaticArtwork(id, request, result)
                         }
+                        ArtworkJob::SearchSubtitles {
+                            request_id,
+                            query,
+                            languages,
+                        } => LibraryEvent::SubtitlesFound(
+                            request_id,
+                            crate::subtitles::search_subtitles_with_cancel(
+                                &query,
+                                &languages,
+                                &automatic_stopping,
+                            ),
+                        ),
+                        ArtworkJob::DownloadSubtitle {
+                            request_id,
+                            file_id,
+                        } => LibraryEvent::SubtitleDownloaded(
+                            request_id,
+                            crate::subtitles::download_subtitle_with_cancel(
+                                file_id,
+                                &automatic_cache,
+                                &automatic_stopping,
+                            ),
+                        ),
                     };
                     if automatic_stopping.load(Ordering::Relaxed)
                         || automatic_events.send(event).is_err()
@@ -119,9 +165,10 @@ impl LibraryWorker {
                         break;
                     };
                     let event = match job {
-                        LibraryJob::Scan(root) => LibraryEvent::Scanned(
-                            scan::scan_directory_with_cancel(&root, &worker_stopping),
-                        ),
+                        LibraryJob::Scan(root) => {
+                            let outcome = scan::scan_directory_with_cancel(&root, &worker_stopping);
+                            LibraryEvent::Scanned(root, outcome)
+                        }
                         LibraryJob::ReadMetadata(paths) => {
                             for (id, path) in paths {
                                 if worker_stopping.load(Ordering::Relaxed) {
@@ -137,6 +184,10 @@ impl LibraryWorker {
                         LibraryJob::Shutdown => break,
                         LibraryJob::Artwork(_, _, _) => {
                             unreachable!("artwork is routed separately")
+                        }
+                        LibraryJob::SearchSubtitles { .. }
+                        | LibraryJob::DownloadSubtitle { .. } => {
+                            unreachable!("subtitle jobs are routed separately")
                         }
                     };
                     if events.send(event).is_err() {
@@ -172,6 +223,28 @@ impl LibraryWorker {
             LibraryJob::Artwork(id, generation, request) => self
                 .artwork_sender
                 .try_send(ArtworkJob::Manual(id, generation, request))
+                .map_err(submission_error),
+            LibraryJob::SearchSubtitles {
+                request_id,
+                query,
+                languages,
+            } => self
+                .artwork_sender
+                .try_send(ArtworkJob::SearchSubtitles {
+                    request_id,
+                    query,
+                    languages,
+                })
+                .map_err(submission_error),
+            LibraryJob::DownloadSubtitle {
+                request_id,
+                file_id,
+            } => self
+                .artwork_sender
+                .try_send(ArtworkJob::DownloadSubtitle {
+                    request_id,
+                    file_id,
+                })
                 .map_err(submission_error),
             job => self.sender.try_send(job).map_err(submission_error),
         }
@@ -330,6 +403,21 @@ mod tests {
             ),
             Err(QueueSubmitError::Full)
         );
+        assert_eq!(
+            worker.try_submit(LibraryJob::SearchSubtitles {
+                request_id: 8,
+                query: "title".into(),
+                languages: vec!["en".into()],
+            }),
+            Err(QueueSubmitError::Full)
+        );
+        assert_eq!(
+            worker.try_submit(LibraryJob::DownloadSubtitle {
+                request_id: 9,
+                file_id: 12,
+            }),
+            Err(QueueSubmitError::Full)
+        );
         assert!(started.elapsed() < Duration::from_millis(50));
     }
 
@@ -368,6 +456,35 @@ mod tests {
         worker.shutdown();
 
         assert!(started.elapsed() < Duration::from_secs(2));
+        fs::remove_dir_all(root).expect("remove scan fixture");
+    }
+
+    #[test]
+    fn scan_event_echoes_the_root_with_its_outcome() {
+        let root = std::env::temp_dir().join(format!(
+            "rust-vlc-worker-root-{}-{}",
+            std::process::id(),
+            fastrand::u64(..)
+        ));
+        fs::create_dir(&root).expect("create scan fixture");
+        fs::write(root.join("track.mp3"), []).expect("create media fixture");
+        let worker = LibraryWorker::spawn(std::env::temp_dir()).unwrap();
+        worker.submit(LibraryJob::Scan(root.clone())).unwrap();
+
+        let event = worker
+            .receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("worker returns the scan result");
+        match event {
+            LibraryEvent::Scanned(scanned_root, outcome) => {
+                assert_eq!(scanned_root, root);
+                assert!(outcome.complete);
+                assert_eq!(outcome.paths, [root.join("track.mp3")]);
+            }
+            _ => panic!("expected a scan result"),
+        }
         fs::remove_dir_all(root).expect("remove scan fixture");
     }
 }

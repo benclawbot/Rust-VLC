@@ -10,6 +10,7 @@ export struct TrackRow {
     genre: string,
     duration: string,
     selected: bool,
+    unavailable: bool,
     artwork: image,
     has-artwork: bool,
     monogram: string,
@@ -43,6 +44,38 @@ export struct QueueRow {
     title: string,
 }
 
+export struct WatchedRootRow {
+    index: int,
+    path: string,
+    status: string,
+}
+
+export struct EqualizerBandRow {
+    index: int,
+    frequency: string,
+    gain: float,
+    gain-label: string,
+}
+
+export struct BookmarkRow {
+    index: int,
+    name: string,
+    time: string,
+}
+
+export struct NetworkHistoryRow {
+    index: int,
+    title: string,
+    address: string,
+    played: string,
+}
+
+export struct SubtitleResultRow {
+    index: int,
+    title: string,
+    detail: string,
+}
+
 component ArchiveButton {
     in property <string> text;
     in property <bool> primary: false;
@@ -50,6 +83,7 @@ component ArchiveButton {
     in property <bool> space-activates: true;
     in property <string> style: "filled";
     callback clicked();
+    callback pointer-moved();
 
     horizontal-stretch: 0;
     vertical-stretch: 0;
@@ -117,6 +151,7 @@ component ArchiveButton {
         width: parent.width;
         height: parent.height;
         enabled: root.enabled;
+        moved => root.pointer-moved();
         clicked => {
             focus-scope.focus();
             root.clicked();
@@ -782,11 +817,13 @@ component SeekSlider {
 
 export component AppWindow inherits Window {
     title: "VLC Première";
+    icon: @image-url("../assets/icons/rust-vlc.png");
     preferred-width: 1440px;
     preferred-height: 960px;
     min-width: 900px;
     min-height: 650px;
     background: #141312;
+    no-frame: root.movie-fullscreen;
     default-font-family: "Inter";
     default-font-size: 14px;
 
@@ -809,14 +846,42 @@ export component AppWindow inherits Window {
     in property <[TrackChoice]> subtitle-tracks: [];
     in property <[TrackChoice]> chapters: [];
     in property <[QueueRow]> queue-rows: [];
+    in property <[WatchedRootRow]> watched-roots: [];
     in property <bool> has-tracks: false;
     in property <bool> has-movies: false;
     in property <bool> has-music-cards: false;
     in property <bool> has-movie-cards: false;
     in property <bool> playing-video: false;
+    in property <bool> picture-in-picture-open: false;
+    in property <bool> can-return-to-video: false;
     in property <image> video-frame;
     in property <bool> has-video-frame: false;
     in property <bool> movie-fullscreen: false;
+    in property <bool> fullscreen-controls-visible: true;
+    in property <bool> equalizer-enabled: false;
+    in-out property <string> equalizer-preset: "Custom settings";
+    in property <[string]> equalizer-presets: [];
+    in property <float> equalizer-preamp-db: 0;
+    in property <string> equalizer-preamp-label: "0.0 dB";
+    in property <[EqualizerBandRow]> equalizer-bands: [];
+    in property <string> ab-repeat-label: "A/B loop off";
+    in property <bool> can-set-ab-repeat: false;
+    in property <bool> has-ab-repeat: false;
+    in property <string> sleep-timer-label: "Sleep timer off";
+    in-out property <string> cast-address-input: "";
+    in property <string> cast-target-label: "Local output";
+    in property <[BookmarkRow]> bookmarks: [];
+    in property <[NetworkHistoryRow]> network-history: [];
+    in property <[SubtitleResultRow]> subtitle-results: [];
+    in property <string> subtitle-search-status: "";
+    in-out property <string> subtitle-language-input: "en";
+    in property <bool> opensubtitles-credentials-available: false;
+    in-out property <string> opensubtitles-api-key-input: "";
+    in-out property <string> opensubtitles-bearer-token-input: "";
+    in property <string> opensubtitles-status: "";
+    in property <string> playlist-io-status: "";
+    in-out property <string> bookmark-name-input: "";
+    in-out property <string> network-url-input: "";
     in property <bool> has-selection: false;
     in property <bool> has-selected-playlist: false;
     in property <bool> can-shuffle-opened-playlist: false;
@@ -839,6 +904,7 @@ export component AppWindow inherits Window {
     in property <string> runtime-message: "Looking for libVLC 3…";
     in property <string> library-status: "";
     in property <string> app-version: "";
+    in property <string> media-controls-status: "";
     in property <bool> has-current-track: false;
     in property <string> current-title: "No track selected";
     in property <string> player-state: "Ready";
@@ -863,10 +929,12 @@ export component AppWindow inherits Window {
     in property <int> queue-revision: 0;
     in-out property <bool> queue-open: false;
     in-out property <bool> tools-open: false;
+    in-out property <string> tools-tab: "Media";
     in property <bool> video-fill: false;
     in property <string> source-title: "";
     in property <string> source-path: "";
     in property <string> source-format: "";
+    in property <string> source-kind: "Local file";
     in property <string> movie-level: "catalog";
     in property <string> movie-back-label: "";
     in property <string> movie-filter: "all";
@@ -972,12 +1040,49 @@ export component AppWindow inherits Window {
     callback select-movie(int);
     callback play-movie(int, bool);
     callback exit-movie-fullscreen();
+    callback return-to-video();
+    callback open-picture-in-picture();
+    callback close-picture-in-picture();
+    callback save-video-frame();
+    callback equalizer-enabled-changed(bool);
+    callback equalizer-preset-changed(string);
+    callback equalizer-preamp-draft-changed(float);
+    callback equalizer-preamp-changed(float);
+    callback equalizer-preamp-cancelled();
+    callback equalizer-band-draft-changed(int, float);
+    callback equalizer-band-changed(int, float);
+    callback equalizer-band-cancelled();
+    callback set-ab-repeat-point(string, int, string);
+    callback clear-ab-repeat(int, string);
+    callback set-sleep-timer(int);
+    callback cast-address-draft-changed(string);
+    callback set-cast-target(string);
+    callback use-local-output();
+    callback bookmark-name-changed(string);
+    callback add-bookmark();
+    callback bookmark-jump(int);
+    callback remove-bookmark(int);
+    callback network-url-input-changed(string);
+    callback play-network-url(bool);
+    callback open-network-history(int);
+    callback remove-network-history(int);
+    callback search-subtitles(string);
+    callback subtitle-languages-changed(string);
+    callback download-subtitle(int);
+    callback save-opensubtitles-credentials(string, string);
+    callback remove-opensubtitles-credentials();
+    callback import-m3u8();
+    callback export-m3u8(int);
+    callback fullscreen-activity();
     callback retry-local-artwork();
     callback find-online-artwork();
     callback tmdb-token-input-changed(string);
     callback save-tmdb-token();
     callback remove-tmdb-token();
     callback settings-closed();
+    callback add-watched-root();
+    callback rescan-watched-roots();
+    callback remove-watched-root(int);
     callback previous();
     callback toggle-pause();
     callback next();
@@ -992,6 +1097,8 @@ export component AppWindow inherits Window {
     callback add-subtitle-file();
     callback audio-delay-changed(string);
     callback subtitle-delay-changed(string);
+    callback audio-delay-draft-changed(string);
+    callback subtitle-delay-draft-changed(string);
     callback jump-time-changed(string);
     callback jump-to-time();
     callback select-chapter(int, int);
@@ -1003,6 +1110,9 @@ export component AppWindow inherits Window {
     forward-focus: movie-keyboard-scope;
     movie-keyboard-scope := FocusScope {
         capture-key-pressed(event) => {
+            if root.movie-fullscreen {
+                root.fullscreen-activity();
+            }
             if (root.settings-open && event.text == Key.Escape) {
                 root.settings-open = false;
                 root.tmdb-token-input = "";
@@ -1027,6 +1137,12 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if root.settings-open || root.about-open || root.movie-details-open || !root.has-current-track {
                 reject
+            } else if root.playing-video && root.has-video-frame && event.text == Key.P {
+                root.open-picture-in-picture();
+                accept
+            } else if root.can-return-to-video && event.text == Key.F {
+                root.return-to-video();
+                accept
             } else if event.modifiers.control && event.text == Key.LeftArrow {
                 root.previous();
                 accept
@@ -1095,14 +1211,16 @@ export component AppWindow inherits Window {
                     ArchiveButton {
                         text: "☷ Tools";
                         style: "plain";
-                        enabled: root.has-current-track;
                         accessible-label: root.tools-open ? "Hide player tools" : "Show player tools";
-                        clicked => { root.tools-open = !root.tools-open; }
+                        clicked => {
+                            if (!root.tools-open && !root.has-current-track) { root.tools-tab = "Stream"; }
+                            root.tools-open = !root.tools-open;
+                        }
                     }
                     ArchiveButton {
                         text: "Options";
                         style: "plain";
-                        accessible-label: "Open artwork options";
+                        accessible-label: "Open options";
                         clicked => {
                             root.tmdb-token-input = "";
                             root.settings-open = true;
@@ -1238,13 +1356,13 @@ export component AppWindow inherits Window {
                         Text { text: "SORT"; color: #ffffffB3; font-size: 9px; font-weight: 700; vertical-alignment: center; }
                         ArchiveComboBox {
                             width: min(185px, max(150px, parent.width * 0.18));
-                            model: ["Recently added", "Title A–Z", "Artist A–Z"];
+                            model: root.music-section == "albums" && root.music-detail-open ? ["Disc / track", "Recently added", "Title A–Z", "Artist A–Z"] : ["Recently added", "Title A–Z", "Artist A–Z"];
                             current-value <=> root.music-sort;
                             accessible-label: "Sort music";
                             selected(value) => root.music-sort-changed(value);
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        if root.search-query != "" || root.music-genre != "All genres" || root.music-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); }
+                        if root.search-query != "" || root.music-genre != "All genres" || (root.music-sort != "Recently added" && !(root.music-section == "albums" && root.music-detail-open && root.music-sort == "Disc / track")): ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); }
                     }
 
                     if root.current-view == "movies": HorizontalLayout {
@@ -1311,6 +1429,8 @@ export component AppWindow inherits Window {
                             primary: true;
                             clicked => root.create-playlist(root.new-playlist-name);
                         }
+                        ArchiveButton { text: "Import M3U8"; accessible-label: "Import an M3U8 playlist"; clicked => root.import-m3u8(); }
+                        if root.playlist-io-status != "": Text { horizontal-stretch: 1; text: root.playlist-io-status; color: #ffffffB3; font-size: 9px; vertical-alignment: center; overflow: elide; }
                     }
 
                     if root.current-view == "music" && root.has-selection && (root.music-section == "tracks" || root.music-detail-open): HorizontalLayout {
@@ -1461,7 +1581,7 @@ export component AppWindow inherits Window {
                         alignment: center;
                         spacing: 8px;
                         Text { text: "No matching items in this view."; color: #ffffffB3; horizontal-alignment: center; }
-                        if root.search-query != "" || root.music-genre != "All genres" || root.music-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); }
+                        if root.search-query != "" || root.music-genre != "All genres" || (root.music-sort != "Recently added" && !(root.music-section == "albums" && root.music-detail-open && root.music-sort == "Disc / track")): ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); }
                     }
 
                     if root.current-view == "music" && (root.music-section == "tracks" || root.music-detail-open) && root.visible-count > 0: ListView {
@@ -1469,14 +1589,14 @@ export component AppWindow inherits Window {
                         accessible-role: list;
                         for track in root.tracks: Rectangle {
                             height: 58px;
-                            background: track.selected ? #2a211b : #1b1917;
+                            background: track.selected ? #2a211b : track.unavailable ? #29211e : #1b1917;
                             border-radius: 4px;
                             accessible-role: list-item;
                             TouchArea {
                                 width: parent.width;
                                 height: parent.height;
                                 accessible-role: button;
-                                accessible-label: "Play " + track.title;
+                                accessible-label: track.unavailable ? track.title + " is unavailable" : "Play " + track.title;
                                 clicked => root.play-track(track.id, track.index);
                             }
                             HorizontalLayout {
@@ -1506,7 +1626,7 @@ export component AppWindow inherits Window {
                                         height: 24px;
                                         style: "plain";
                                         text: track.title;
-                                        accessible-label: "Play " + track.title;
+                                        accessible-label: track.unavailable ? track.title + " is unavailable" : "Play " + track.title;
                                         clicked => root.play-track(track.id, track.index);
                                     }
                                     Text { text: track.detail; color: #ffffffB3; font-size: 10px; overflow: elide; }
@@ -1555,6 +1675,7 @@ export component AppWindow inherits Window {
                             Text { text: root.opened-playlist-name; color: #ffffff; font-weight: 650; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                             ArchiveButton { text: "Play all"; enabled: root.visible-count > 0; primary: true; clicked => root.play-all-collection(); }
                             ArchiveButton { text: "Shuffle stored order"; enabled: root.can-shuffle-opened-playlist; clicked => root.shuffle-opened-playlist(); }
+                            ArchiveButton { text: "Export M3U8"; accessible-label: "Export " + root.opened-playlist-name + " as an M3U8 playlist"; clicked => root.export-m3u8(root.opened-playlist-id); }
                             ArchiveButton {
                                 text: root.confirm-delete-playlist ? "Confirm delete" : "Delete";
                                 accessible-label: root.confirm-delete-playlist ? "Confirm deleting playlist" : "Delete playlist";
@@ -1604,7 +1725,7 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                         background: #1b1917;
                         border-radius: 8px;
-                        VerticalLayout { alignment: center; spacing: 8px; Text { text: "No tracks match this collection and search."; color: #ffffffB3; horizontal-alignment: center; } if root.search-query != "" || root.music-genre != "All genres" || root.music-sort != "Recently added": ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); } }
+                        VerticalLayout { alignment: center; spacing: 8px; Text { text: "No tracks match this collection and search."; color: #ffffffB3; horizontal-alignment: center; } if root.search-query != "" || root.music-genre != "All genres" || (root.music-sort != "Recently added" && !(root.music-section == "albums" && root.music-detail-open && root.music-sort == "Disc / track")): ArchiveButton { text: "Clear filters"; style: "plain"; clicked => root.clear-music-filters(); } }
                     }
 
                     if root.current-view == "movies" && !root.has-movies: Rectangle {
@@ -1756,16 +1877,40 @@ export component AppWindow inherits Window {
                 background: #080808;
                 clip: true;
                 Image { x: 0px; y: 0px; width: parent.width; height: parent.height; source: root.video-frame; image-fit: root.video-fill ? cover : contain; }
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    moved => root.fullscreen-activity();
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down || event.kind == PointerEventKind.up {
+                            root.fullscreen-activity();
+                        }
+                    }
+                }
                 if !root.has-video-frame: Text { x: 32px; y: 24px; width: parent.width - 64px; height: parent.height - 48px; text: root.player-state == "Playback error" ? root.status-message : "Opening " + root.current-title + "…"; color: #ffffffB3; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
-                HorizontalLayout {
+                fullscreen-transport-scope := FocusScope {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     width: 172px;
                     height: 52px;
-                    spacing: 12px;
-                    ArchiveButton { width: 48px; height: 48px; style: "icon"; text: "|<"; accessible-label: "Previous movie"; enabled: root.has-current-track; space-activates: false; clicked => root.previous(); }
-                    ArchiveButton { width: 48px; height: 48px; style: "icon"; text: root.is-paused ? "▶" : "Ⅱ"; accessible-label: root.is-paused ? "Play movie" : "Pause movie"; enabled: root.can-toggle-pause; clicked => root.toggle-pause(); }
-                    ArchiveButton { width: 48px; height: 48px; style: "icon"; text: ">|"; accessible-label: "Next movie"; enabled: root.has-current-track; space-activates: false; clicked => root.next(); }
+                    visible: root.fullscreen-controls-visible || self.has-focus;
+                    HorizontalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        spacing: 12px;
+                        ArchiveButton { width: 48px; height: 48px; style: "icon"; text: "|<"; accessible-label: "Previous movie"; enabled: root.has-current-track; space-activates: false; pointer-moved => root.fullscreen-activity(); clicked => { root.fullscreen-activity(); root.previous(); } }
+                        ArchiveButton {
+                            width: 48px;
+                            height: 48px;
+                            style: "icon";
+                            text: root.player-state == "Finished" ? "↻" : root.is-paused || root.player-state == "Ready" ? "▶" : "Ⅱ";
+                            accessible-label: root.player-state == "Finished" ? "Replay movie" : root.is-paused || root.player-state == "Ready" ? "Play movie" : "Pause movie";
+                            enabled: root.can-toggle-pause;
+                            pointer-moved => root.fullscreen-activity();
+                            clicked => { root.fullscreen-activity(); root.toggle-pause(); }
+                        }
+                        ArchiveButton { width: 48px; height: 48px; style: "icon"; text: ">|"; accessible-label: "Next movie"; enabled: root.has-current-track; space-activates: false; pointer-moved => root.fullscreen-activity(); clicked => { root.fullscreen-activity(); root.next(); } }
+                    }
                 }
             }
 
@@ -1805,93 +1950,327 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.tools-open && root.has-current-track && !root.movie-fullscreen: Rectangle {
-                height: 164px;
+            if root.tools-open && !root.movie-fullscreen: Rectangle {
+                height: 300px;
                 background: #1b1917;
                 border-color: #3b3631;
                 border-width: 1px;
                 VerticalLayout {
-                    padding-left: 18px;
-                    padding-right: 18px;
-                    padding-top: 8px;
-                    padding-bottom: 8px;
-                    spacing: 7px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 6px;
+                    padding-bottom: 6px;
+                    spacing: 5px;
                     HorizontalLayout {
-                        height: 22px;
+                        height: 26px;
                         spacing: 8px;
-                        Text { text: root.playing-video ? "▣  MOVIE" : "♫  MUSIC"; color: #f46b32; font-size: 10px; font-weight: 700; vertical-alignment: center; accessible-label: root.playing-video ? "Movie" : "Music"; }
-                        Text { text: root.source-title; color: #ffffff; font-size: 14px; font-weight: 650; horizontal-stretch: 1; overflow: elide; accessible-label: root.source-title + ", local file " + root.source-path; }
-                        Text { text: root.source-format; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        Text { text: root.has-current-track ? (root.playing-video ? "▣  MOVIE" : "♫  MUSIC") : "TOOLS"; color: #f46b32; font-size: 10px; font-weight: 700; vertical-alignment: center; accessible-label: root.has-current-track ? (root.playing-video ? "Movie" : "Music") : "Player tools"; }
+                        Text { text: root.has-current-track ? root.source-title : "No media loaded"; color: #ffffff; font-size: 12px; font-weight: 650; horizontal-stretch: 1; overflow: elide; accessible-label: root.has-current-track ? root.source-title + (root.source-kind == "Network stream" ? ", network stream " : ", local file ") + root.source-path : "No media loaded. Open a stream or import a playlist."; }
+                        Text { text: root.has-current-track ? root.source-kind : "Ready for media"; color: #ffffff78; font-size: 9px; vertical-alignment: center; }
                     }
                     HorizontalLayout {
-                        height: 114px;
-                        spacing: 8px;
-                        alignment: center;
-                        VerticalLayout {
-                            width: 136px;
-                            Text { text: "♫  Audio"; color: #ffffff; font-size: 11px; font-weight: 650; }
-                            if root.audio-tracks.length == 0: Text { text: "No audio tracks"; height: 24px; color: #ffffff78; font-size: 10px; vertical-alignment: center; }
-                            if root.audio-tracks.length > 0: ListView {
-                                vertical-stretch: 1;
-                                for choice in root.audio-tracks: Rectangle {
-                                    height: 24px;
-                                    ArchiveButton { width: parent.width; height: parent.height; text: choice.title; clicked => root.select-audio-track(root.current-track-id, choice.id); }
+                        height: 30px;
+                        spacing: 3px;
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Media"; primary: root.tools-tab == "Media"; clicked => { root.tools-tab = "Media"; } }
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Equalizer"; primary: root.tools-tab == "Equalizer"; clicked => { root.tools-tab = "Equalizer"; } }
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Time"; primary: root.tools-tab == "Time"; clicked => { root.tools-tab = "Time"; } }
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Bookmarks"; primary: root.tools-tab == "Bookmarks"; clicked => { root.tools-tab = "Bookmarks"; } }
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Stream"; primary: root.tools-tab == "Stream"; clicked => { root.tools-tab = "Stream"; } }
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Subtitles"; primary: root.tools-tab == "Subtitles"; clicked => { root.tools-tab = "Subtitles"; } }
+                        ArchiveButton { horizontal-stretch: 1; style: "tab"; text: "Playlist"; primary: root.tools-tab == "Playlist"; clicked => { root.tools-tab = "Playlist"; } }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        content-width: self.width;
+                        if root.tools-tab == "Media": HorizontalLayout {
+                            width: parent.width;
+                            height: 190px;
+                            spacing: 8px;
+                            alignment: center;
+                            VerticalLayout {
+                                width: 136px;
+                                Text { text: "♫  Audio"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                                if root.audio-tracks.length == 0: Text { text: root.has-current-track ? "No audio tracks" : "Load or play media to choose audio tracks."; height: 32px; color: #ffffff78; font-size: 10px; vertical-alignment: center; wrap: word-wrap; }
+                                if root.audio-tracks.length > 0: ListView {
+                                    vertical-stretch: 1;
+                                    for choice in root.audio-tracks: Rectangle {
+                                        height: 24px;
+                                        ArchiveButton { width: parent.width; height: parent.height; text: choice.title; enabled: root.has-current-track; clicked => root.select-audio-track(root.current-track-id, choice.id); }
+                                    }
+                                }
+                            }
+                            Rectangle { width: 1px; height: 150px; background: #3b3631; }
+                            VerticalLayout {
+                                width: 150px;
+                                Text { text: "CC  Subtitles"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                                ArchiveButton { width: parent.width; height: 24px; text: "⊘ Off"; accessible-label: "Turn subtitles off"; enabled: root.has-current-track; clicked => root.select-subtitle-track(root.current-track-id, -1); }
+                                if root.subtitle-tracks.length == 0: Text { text: root.has-current-track ? "No subtitle tracks" : "Load media to choose subtitles."; height: 32px; color: #ffffff78; font-size: 10px; vertical-alignment: center; wrap: word-wrap; }
+                                if root.subtitle-tracks.length > 0: ListView {
+                                    vertical-stretch: 1;
+                                    for choice in root.subtitle-tracks: Rectangle {
+                                        height: 24px;
+                                        ArchiveButton { width: parent.width; height: parent.height; text: choice.title; enabled: root.has-current-track; clicked => root.select-subtitle-track(root.current-track-id, choice.id); }
+                                    }
+                                }
+                            }
+                            if root.chapters.length > 0: Rectangle { width: 1px; height: 150px; background: #3b3631; }
+                            if root.chapters.length > 0: VerticalLayout {
+                                width: 130px;
+                                Text { text: "▤  Chapters"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                                ListView {
+                                    vertical-stretch: 1;
+                                    for chapter in root.chapters: Rectangle {
+                                        height: 24px;
+                                        ArchiveButton { width: parent.width; height: parent.height; text: chapter.title; enabled: root.has-current-track; clicked => root.select-chapter(root.current-track-id, chapter.id); }
+                                    }
+                                }
+                            }
+                            if root.chapters.length > 0: Rectangle { width: 1px; height: 150px; background: #3b3631; }
+                            VerticalLayout {
+                                width: 350px;
+                                Text { text: "⏱  Sync & playback"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                                HorizontalLayout {
+                                    spacing: 5px;
+                                    Text { width: 42px; text: "Audio"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                    ArchiveLineEdit { width: 68px; text <=> root.audio-delay-input; enabled: root.has-current-track; placeholder-text: "0"; edited(text) => root.audio-delay-draft-changed(text); accessible-label: "Audio delay in milliseconds"; }
+                                    Text { width: 18px; text: "ms"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                    ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "✓"; accessible-label: "Apply audio delay"; enabled: root.has-current-track; clicked => root.audio-delay-changed(root.audio-delay-input); }
+                                    ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "↺"; accessible-label: "Reset audio delay"; enabled: root.has-current-track; clicked => root.audio-delay-changed("0"); }
+                                }
+                                HorizontalLayout {
+                                    spacing: 5px;
+                                    Text { width: 42px; text: "Subs"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                    ArchiveLineEdit { width: 68px; text <=> root.subtitle-delay-input; enabled: root.has-current-track; placeholder-text: "0"; edited(text) => root.subtitle-delay-draft-changed(text); accessible-label: "Subtitle delay in milliseconds"; }
+                                    Text { width: 18px; text: "ms"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                    ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "✓"; accessible-label: "Apply subtitle delay"; enabled: root.has-current-track; clicked => root.subtitle-delay-changed(root.subtitle-delay-input); }
+                                    ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "↺"; accessible-label: "Reset subtitle delay"; enabled: root.has-current-track; clicked => root.subtitle-delay-changed("0"); }
+                                }
+                                HorizontalLayout {
+                                    spacing: 5px;
+                                    ArchiveLineEdit { width: 102px; text <=> root.jump-time-input; enabled: root.can-seek; placeholder-text: "hh:mm:ss"; edited(text) => root.jump-time-changed(text); accessible-label: "Jump to time"; }
+                                    ArchiveButton { width: 62px; text: "↪ Jump"; accessible-label: "Jump to time"; enabled: root.can-seek; primary: true; clicked => root.jump-to-time(); }
+                                    ArchiveButton { width: 54px; text: root.video-fill ? "Fit" : "Fill"; visible: root.playing-video; accessible-label: root.video-fill ? "Fit video to screen" : "Fill screen with video"; clicked => root.set-video-fill(!root.video-fill); }
+                                    ArchiveButton { width: 88px; text: "⊕ CC"; accessible-label: "Add subtitle file"; enabled: root.has-current-track && root.playing-video; clicked => root.add-subtitle-file(); }
                                 }
                             }
                         }
-                        Rectangle { width: 1px; height: 84px; background: #3b3631; }
-                        VerticalLayout {
-                            width: 150px;
-                            Text { text: "CC  Subtitles"; color: #ffffff; font-size: 11px; font-weight: 650; }
-                            ArchiveButton { width: parent.width; height: 24px; text: "⊘ Off"; accessible-label: "Turn subtitles off"; clicked => root.select-subtitle-track(root.current-track-id, -1); }
-                            if root.subtitle-tracks.length == 0: Text { text: "No subtitle tracks"; height: 24px; color: #ffffff78; font-size: 10px; vertical-alignment: center; }
-                            if root.subtitle-tracks.length > 0: ListView {
+                        if root.tools-tab == "Equalizer": VerticalLayout {
+                            width: parent.width;
+                            height: 350px;
+                            padding: 6px;
+                            spacing: 8px;
+                            HorizontalLayout {
+                                height: 34px;
+                                ArchiveCheckBox { text: "Enable equalizer"; checked: root.equalizer-enabled; enabled: root.runtime-available && root.equalizer-bands.length > 0; toggled => root.equalizer-enabled-changed(self.checked); }
+                                Text { text: "PRESET"; color: #ffffffB3; font-size: 9px; vertical-alignment: center; }
+                                ArchiveComboBox {
+                                    width: 220px;
+                                    model: root.equalizer-presets;
+                                    current-value <=> root.equalizer-preset;
+                                    enabled: root.runtime-available && root.equalizer-presets.length > 0;
+                                    accessible-label: "Equalizer preset supplied by VLC";
+                                    selected(value) => root.equalizer-preset-changed(value);
+                                }
+                            }
+                            HorizontalLayout {
+                                height: 34px;
+                                Text { width: 65px; text: "Preamp"; color: #ffffff; vertical-alignment: center; }
+                                SeekSlider {
+                                    horizontal-stretch: 1;
+                                    minimum: -20;
+                                    maximum: 20;
+                                    step: 0.5;
+                                    keyboard-step: 0.5;
+                                    value: root.equalizer-preamp-db;
+                                    enabled: root.equalizer-enabled && root.runtime-available;
+                                    seek-label: "Equalizer preamp gain in decibels";
+                                    changed(value) => root.equalizer-preamp-draft-changed(value);
+                                    released(value) => root.equalizer-preamp-changed(value);
+                                    cancelled => root.equalizer-preamp-cancelled();
+                                }
+                                Text { width: 66px; text: root.equalizer-preamp-label; color: #ffffffB3; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; }
+                            }
+                            if root.equalizer-bands.length == 0: Text { height: 34px; text: "The current VLC runtime did not report equalizer band frequencies."; color: #ffffffB3; wrap: word-wrap; vertical-alignment: center; }
+                            if root.equalizer-bands.length > 0: ListView {
                                 vertical-stretch: 1;
-                                for choice in root.subtitle-tracks: Rectangle {
-                                    height: 24px;
-                                    ArchiveButton { width: parent.width; height: parent.height; text: choice.title; clicked => root.select-subtitle-track(root.current-track-id, choice.id); }
+                                accessible-role: list;
+                                for band in root.equalizer-bands: Rectangle {
+                                    height: 30px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text { width: 72px; text: band.frequency; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                        SeekSlider {
+                                            horizontal-stretch: 1;
+                                            minimum: -20;
+                                            maximum: 20;
+                                            step: 0.5;
+                                            keyboard-step: 0.5;
+                                            value: band.gain;
+                                            enabled: root.equalizer-enabled && root.runtime-available;
+                                            seek-label: "Equalizer gain at " + band.frequency;
+                                            changed(value) => root.equalizer-band-draft-changed(band.index, value);
+                                            released(value) => root.equalizer-band-changed(band.index, value);
+                                            cancelled => root.equalizer-band-cancelled();
+                                        }
+                                        Text { width: 66px; text: band.gain-label; color: #ffffffB3; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; }
+                                    }
                                 }
                             }
                         }
-                        if root.chapters.length > 0: Rectangle { width: 1px; height: 84px; background: #3b3631; }
-                        if root.chapters.length > 0: VerticalLayout {
-                            width: 130px;
-                            Text { text: "▤  Chapters"; color: #ffffff; font-size: 11px; font-weight: 650; }
-                            ListView {
+                        if root.tools-tab == "Time": VerticalLayout {
+                            width: parent.width;
+                            height: 150px;
+                            padding: 8px;
+                            spacing: 10px;
+                            Text { text: "A/B loop"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                            if !root.has-current-track: Text { text: "Load or play media to set a loop or jump to a time."; color: #ffffff78; font-size: 10px; wrap: word-wrap; }
+                            Text { text: root.ab-repeat-label; color: #ffffffB3; font-size: 11px; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ArchiveButton { text: "Set A here"; enabled: root.can-set-ab-repeat; accessible-label: "Set loop start at the current position"; clicked => root.set-ab-repeat-point("A", root.current-track-id, root.current-load-generation); }
+                                ArchiveButton { text: "Set B here"; enabled: root.can-set-ab-repeat; accessible-label: "Set loop end at the current position"; clicked => root.set-ab-repeat-point("B", root.current-track-id, root.current-load-generation); }
+                                ArchiveButton { text: "Clear loop"; enabled: root.has-ab-repeat && root.can-set-ab-repeat; clicked => root.clear-ab-repeat(root.current-track-id, root.current-load-generation); }
+                            }
+                            Rectangle { height: 1px; background: #3b3631; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: root.sleep-timer-label; color: #ffffff; font-size: 11px; horizontal-stretch: 1; vertical-alignment: center; }
+                                ArchiveButton { text: "15 min"; enabled: root.runtime-available && root.has-current-track; clicked => root.set-sleep-timer(15); }
+                                ArchiveButton { text: "30 min"; enabled: root.runtime-available && root.has-current-track; clicked => root.set-sleep-timer(30); }
+                                ArchiveButton { text: "60 min"; enabled: root.runtime-available && root.has-current-track; clicked => root.set-sleep-timer(60); }
+                                ArchiveButton { text: "Cancel"; enabled: root.sleep-timer-label != "Sleep timer off"; clicked => root.set-sleep-timer(0); }
+                            }
+                            Text { text: "The timer is temporary and stops playback when it expires."; color: #ffffff78; font-size: 10px; wrap: word-wrap; }
+                        }
+                        if root.tools-tab == "Bookmarks": VerticalLayout {
+                            width: parent.width;
+                            height: 230px;
+                            padding: 8px;
+                            spacing: 8px;
+                            Text { text: root.has-current-track ? "Bookmarks for " + root.current-title : "Bookmarks"; color: #ffffff; font-size: 12px; font-weight: 650; overflow: elide; }
+                            if !root.has-current-track: Text { text: "Load media to save or jump to its bookmarks."; color: #ffffff78; font-size: 10px; wrap: word-wrap; }
+                            HorizontalLayout {
+                                height: 34px;
+                                spacing: 8px;
+                                ArchiveLineEdit { horizontal-stretch: 1; text <=> root.bookmark-name-input; enabled: root.has-current-track; placeholder-text: "Name this point (optional)"; edited(text) => root.bookmark-name-changed(text); accessible-label: "Optional bookmark name"; }
+                                ArchiveButton { text: "Save current point"; primary: true; enabled: root.has-current-track; clicked => root.add-bookmark(); }
+                            }
+                            if root.bookmarks.length == 0: Text { height: 32px; text: root.has-current-track ? "No bookmarks for this media yet." : "No media is selected."; color: #ffffff78; vertical-alignment: center; }
+                            if root.bookmarks.length > 0: ListView {
                                 vertical-stretch: 1;
-                                for chapter in root.chapters: Rectangle {
-                                    height: 24px;
-                                    ArchiveButton { width: parent.width; height: parent.height; text: chapter.title; clicked => root.select-chapter(root.current-track-id, chapter.id); }
+                                accessible-role: list;
+                                for bookmark in root.bookmarks: Rectangle {
+                                    height: 34px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text { text: bookmark.name; color: #ffffff; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
+                                        Text { text: bookmark.time; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                        ArchiveButton { text: "Jump"; enabled: root.has-current-track; accessible-label: "Jump to bookmark " + bookmark.name; clicked => root.bookmark-jump(bookmark.index); }
+                                        ArchiveButton { text: "Remove"; enabled: root.has-current-track; accessible-label: "Remove bookmark " + bookmark.name; clicked => root.remove-bookmark(bookmark.index); }
+                                    }
                                 }
                             }
                         }
-                        if root.chapters.length > 0: Rectangle { width: 1px; height: 84px; background: #3b3631; }
-                        VerticalLayout {
-                            width: 350px;
-                            Text { text: "⏱  Sync & time"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                        if root.tools-tab == "Stream": VerticalLayout {
+                            width: parent.width;
+                            height: 400px;
+                            padding: 8px;
+                            spacing: 8px;
+                            Text { text: "Cast target"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                            Text { text: "Current output: " + root.cast-target-label; color: #ffffffB3; font-size: 10px; overflow: elide; }
                             HorizontalLayout {
-                                spacing: 5px;
-                                Text { width: 42px; text: "Audio"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
-                                ArchiveLineEdit { width: 68px; text <=> root.audio-delay-input; placeholder-text: "0"; accessible-label: "Audio delay in milliseconds"; }
-                                Text { width: 18px; text: "ms"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
-                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "✓"; accessible-label: "Apply audio delay"; clicked => root.audio-delay-changed(root.audio-delay-input); }
-                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "↺"; accessible-label: "Reset audio delay"; clicked => root.audio-delay-changed("0"); }
+                                height: 34px;
+                                spacing: 8px;
+                                ArchiveLineEdit { horizontal-stretch: 1; text <=> root.cast-address-input; placeholder-text: "Device IP or hostname"; edited(text) => root.cast-address-draft-changed(text); accessible-label: "Chromecast target IP address or hostname"; }
+                                ArchiveButton { text: "Connect"; enabled: root.cast-address-input != "" && root.runtime-available; primary: true; clicked => root.set-cast-target(root.cast-address-input); }
+                                ArchiveButton { text: "Use local"; enabled: root.cast-target-label != "Local output"; clicked => root.use-local-output(); }
                             }
+                            Rectangle { height: 1px; background: #3b3631; }
+                            Text { text: "Network media"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                            Text { text: "Enter an HTTP, HTTPS, RTSP or RTMP address. Credentials in the URL are rejected; signed query text is hidden in history."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
                             HorizontalLayout {
-                                spacing: 5px;
-                                Text { width: 42px; text: "Subs"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
-                                ArchiveLineEdit { width: 68px; text <=> root.subtitle-delay-input; placeholder-text: "0"; accessible-label: "Subtitle delay in milliseconds"; }
-                                Text { width: 18px; text: "ms"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
-                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "✓"; accessible-label: "Apply subtitle delay"; clicked => root.subtitle-delay-changed(root.subtitle-delay-input); }
-                                ArchiveButton { width: 48px; height: 32px; style: "icon"; text: "↺"; accessible-label: "Reset subtitle delay"; clicked => root.subtitle-delay-changed("0"); }
+                                height: 34px;
+                                spacing: 8px;
+                                ArchiveLineEdit { horizontal-stretch: 1; text <=> root.network-url-input; placeholder-text: "https://example.test/movie.m3u8"; edited(text) => root.network-url-input-changed(text); accessible-label: "Network media URL without embedded username or password"; }
+                                ArchiveButton { text: "Play video"; primary: true; enabled: root.network-url-input != ""; clicked => root.play-network-url(false); }
+                                ArchiveButton { text: "Play audio"; enabled: root.network-url-input != ""; clicked => root.play-network-url(true); }
                             }
+                            Text { text: "Recent network media"; color: #ffffff; font-size: 11px; font-weight: 650; }
+                            if root.network-history.length == 0: Text { height: 32px; text: "Played network media will appear here."; color: #ffffff78; vertical-alignment: center; }
+                            if root.network-history.length > 0: ListView {
+                                vertical-stretch: 1;
+                                accessible-role: list;
+                                for entry in root.network-history: Rectangle {
+                                    height: 48px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            alignment: center;
+                                            Text { text: entry.title; color: #ffffff; font-size: 10px; overflow: elide; }
+                                            Text { text: entry.address; color: #ffffffB3; font-size: 9px; overflow: elide; accessible-label: "Redacted address " + entry.address; }
+                                        }
+                                        Text { width: 56px; text: entry.played; color: #ffffff78; font-size: 9px; vertical-alignment: center; }
+                                        ArchiveButton { text: "Play"; accessible-label: "Play network media " + entry.title; clicked => root.open-network-history(entry.index); }
+                                        ArchiveButton { text: "Remove"; accessible-label: "Remove " + entry.title + " from network history"; clicked => root.remove-network-history(entry.index); }
+                                    }
+                                }
+                            }
+                        }
+                        if root.tools-tab == "Subtitles": VerticalLayout {
+                            width: parent.width;
+                            height: 330px;
+                            padding: 8px;
+                            spacing: 8px;
+                            Text { text: root.has-current-track ? "Find subtitles for " + root.current-title : "Find subtitles"; color: #ffffff; font-size: 12px; font-weight: 650; overflow: elide; }
+                            if !root.has-current-track: Text { text: "Load a movie to search and attach subtitles."; color: #ffffff78; font-size: 10px; wrap: word-wrap; }
+                            Text { text: "Search sends the title and language codes only. Downloaded SRT files go to the application cache and attach only to the same media load."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
                             HorizontalLayout {
-                                spacing: 5px;
-                                ArchiveLineEdit { width: 102px; text <=> root.jump-time-input; placeholder-text: "hh:mm:ss"; edited(text) => root.jump-time-changed(text); accessible-label: "Jump to time"; }
-                                ArchiveButton { width: 62px; text: "↪ Jump"; accessible-label: "Jump to time"; enabled: root.can-seek; primary: true; clicked => root.jump-to-time(); }
-                                ArchiveButton { width: 54px; text: root.video-fill ? "Fit" : "Fill"; visible: root.playing-video; accessible-label: root.video-fill ? "Fit video to screen" : "Fill screen with video"; clicked => root.set-video-fill(!root.video-fill); }
-                                ArchiveButton { width: 88px; text: "⊕ CC"; accessible-label: "Add subtitle file"; clicked => root.add-subtitle-file(); }
+                                height: 34px;
+                                spacing: 8px;
+                                Text { text: "Languages"; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                                ArchiveLineEdit { width: 160px; text <=> root.subtitle-language-input; placeholder-text: "en,fr"; edited(text) => root.subtitle-languages-changed(text); accessible-label: "Subtitle language codes, comma separated"; }
+                                ArchiveButton { text: "Search subtitles"; primary: true; enabled: root.playing-video; clicked => root.search-subtitles(root.subtitle-language-input); }
+                                Rectangle { horizontal-stretch: 1; }
                             }
+                            if root.subtitle-search-status != "": Text { height: 28px; text: root.subtitle-search-status; color: #ffffffB3; font-size: 10px; wrap: word-wrap; vertical-alignment: center; }
+                            if root.subtitle-results.length == 0: Text { vertical-stretch: 1; text: root.opensubtitles-credentials-available ? "Search for matching subtitles. OpenSubtitles errors appear here." : "Add an OpenSubtitles API key in Options before searching."; color: #ffffff78; font-size: 10px; vertical-alignment: center; horizontal-alignment: center; wrap: word-wrap; }
+                            if root.subtitle-results.length > 0: ListView {
+                                vertical-stretch: 1;
+                                accessible-role: list;
+                                for result in root.subtitle-results: Rectangle {
+                                    height: 44px;
+                                    background: #211e1b;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 8px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            alignment: center;
+                                            Text { text: result.title; color: #ffffff; font-size: 10px; overflow: elide; }
+                                            Text { text: result.detail; color: #ffffff78; font-size: 9px; overflow: elide; }
+                                        }
+                                        ArchiveButton { text: "Download & attach"; enabled: root.opensubtitles-credentials-available && root.playing-video; accessible-label: "Download and attach subtitle " + result.title; clicked => root.download-subtitle(result.index); }
+                                    }
+                                }
+                            }
+                        }
+                        if root.tools-tab == "Playlist": VerticalLayout {
+                            width: parent.width;
+                            height: 180px;
+                            padding: 8px;
+                            spacing: 8px;
+                            Text { text: "M3U8 playlists"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                            Text { text: "Import preserves entry order and repeats. Export writes playlist references only; source media is never copied or modified."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                            HorizontalLayout {
+                                height: 36px;
+                                spacing: 8px;
+                                ArchiveButton { text: "Import M3U8"; primary: true; clicked => root.import-m3u8(); }
+                                ArchiveButton { text: "Export opened playlist"; enabled: root.opened-playlist-id >= 0; clicked => root.export-m3u8(root.opened-playlist-id); }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            Text { text: root.playlist-io-status; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
                         }
                     }
                 }
@@ -1928,6 +2307,9 @@ export component AppWindow inherits Window {
                             ArchiveButton { width: 42px; height: 38px; style: "icon"; text: ">|"; accessible-label: "Next media"; enabled: root.has-current-track; space-activates: false; clicked => root.next(); }
                         }
                         ArchiveButton { width: 42px; height: 38px; style: "icon"; text: "■"; accessible-label: "Stop playback"; enabled: root.can-stop; space-activates: false; clicked => root.stop(); }
+                        if root.can-return-to-video: ArchiveButton { width: 112px; height: 34px; text: "Return to video"; accessible-label: "Return to video fullscreen (F)"; clicked => root.return-to-video(); }
+                        if root.playing-video: ArchiveButton { width: 88px; height: 34px; text: "▣ Screenshot"; accessible-label: "Save the current video frame as a PNG image"; enabled: root.has-video-frame; clicked => root.save-video-frame(); }
+                        if root.playing-video: ArchiveButton { width: 68px; height: 34px; text: root.picture-in-picture-open ? "Close PiP" : "PiP"; accessible-label: root.picture-in-picture-open ? "Close picture-in-picture window" : "Open picture-in-picture window (P)"; enabled: root.has-video-frame || root.picture-in-picture-open; clicked => { if (root.picture-in-picture-open) { root.close-picture-in-picture(); } else { root.open-picture-in-picture(); } } }
                     }
                     HorizontalLayout {
                         height: 24px;
@@ -1990,7 +2372,7 @@ export component AppWindow inherits Window {
             x: max(18px, parent.width - self.width - 24px);
             y: 72px;
             width: 430px;
-            height: 340px;
+            height: 450px;
             background: #211e1b;
             border-color: #5a392a;
             border-width: 1px;
@@ -2004,12 +2386,13 @@ export component AppWindow inherits Window {
                 }
                 Text { text: "Version " + root.app-version; color: #f46b32; font-size: 12px; font-weight: 650; }
                 Text { text: "A local-first desktop media library. Media paths, tags, artwork and playback history stay on this device unless you request an online artwork lookup."; color: #ffffff; font-size: 11px; wrap: word-wrap; }
-                Text { text: "Movie artwork is looked up only when you choose Find artwork online. Automatic music artwork searches YouTube with the track title and artist; its MusicBrainz fallback may also use the album tag. Native file paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                Text { text: "Movie artwork lookup runs only when you choose Find artwork online. Music tags and art are read locally first. If local art is missing, automatic online artwork lookup sends the track title and artist to YouTube; its MusicBrainz/Cover Art Archive fallback may also send the album tag. Native media paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
                 Image { width: 85px; height: 62px; source: @image-url("../assets/attribution/tmdb-logo.png"); image-fit: contain; accessible-label: "TMDB logo"; }
                 Text { text: "This product uses the TMDB API but is not endorsed or certified by TMDB."; color: #ffffff; font-size: 10px; wrap: word-wrap; }
-                Text { text: "Inter is by the Inter Project Authors and is included under the SIL Open Font License 1.1; see the bundled OFL.txt. Playback requires a compatible external VLC 3 installation; VLC is not bundled."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                Text { text: "Windows and macOS releases bundle VLC 3.0.24 and its plugins. Arch installs system libVLC 3 and the full VLC plugin set as package dependencies. Inter is included under the SIL Open Font License 1.1; see the bundled OFL.txt."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                Text { text: root.media-controls-status; color: #ffffff78; font-size: 9px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; }
-                Text { text: "Music metadata lookup runs automatically. Movie artwork lookup remains manual."; color: #f46b32; font-size: 10px; font-weight: 650; }
+                Text { text: "When local music artwork is missing, online artwork lookup runs automatically. Movie artwork lookup remains manual."; color: #f46b32; font-size: 10px; font-weight: 650; }
             }
         }
 
@@ -2023,9 +2406,9 @@ export component AppWindow inherits Window {
             settings-scope := FocusScope {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: min(560px, parent.width - 36px);
-                height: min(390px, parent.height - 36px);
-                forward-focus: tmdb-token-editor;
+                width: min(720px, parent.width - 36px);
+                height: min(680px, parent.height - 36px);
+                forward-focus: add-watched-root-button;
                 init => self.focus();
                 Rectangle {
                     width: parent.width;
@@ -2036,12 +2419,12 @@ export component AppWindow inherits Window {
                     border-radius: 10px;
                     VerticalLayout {
                         padding: 22px;
-                        spacing: 14px;
+                        spacing: 8px;
                         HorizontalLayout {
-                            Text { text: "Artwork options"; color: #ffffff; font-size: 22px; font-weight: 700; horizontal-stretch: 1; }
+                            Text { text: "Options"; color: #ffffff; font-size: 22px; font-weight: 700; horizontal-stretch: 1; }
                             ArchiveButton {
                                 text: "Close";
-                                accessible-label: "Close artwork options";
+                                accessible-label: "Close options";
                                 clicked => {
                                     root.tmdb-token-input = "";
                                     root.settings-open = false;
@@ -2050,6 +2433,43 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            VerticalLayout {
+                                width: parent.width;
+                                spacing: 10px;
+                        Text { text: "Library folders"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                        Text { text: "Folders are scanned on launch and about once a minute. Removing a folder stops future scans; imported items, history, playlists and source files stay in place."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                        if root.watched-roots.length > 0: ListView {
+                            height: 138px;
+                            accessible-role: list;
+                            for watched-root in root.watched-roots: Rectangle {
+                                height: 42px;
+                                background: #1b1917;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 6px;
+                                    spacing: 9px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        Text { text: watched-root.path; color: #ffffff; font-size: 10px; overflow: elide; accessible-label: watched-root.path; }
+                                    }
+                                    Text { width: 150px; text: watched-root.status; color: #ffffffB3; font-size: 9px; vertical-alignment: center; overflow: elide; accessible-label: "Folder status: " + watched-root.status; }
+                                    ArchiveButton { text: "Remove"; accessible-label: "Stop watching " + watched-root.path + "; keep imported media"; clicked => root.remove-watched-root(watched-root.index); }
+                                }
+                            }
+                        }
+                        if root.watched-roots.length == 0: Text { height: 30px; text: "No watched folders. Add a folder to scan it automatically."; color: #ffffffB3; font-size: 10px; vertical-alignment: center; }
+                        HorizontalLayout {
+                            height: 34px;
+                            spacing: 8px;
+                            add-watched-root-button := ArchiveButton { text: "Add folder"; primary: true; accessible-label: "Add a watched library folder"; clicked => root.add-watched-root(); }
+                            ArchiveButton { text: "Rescan all"; enabled: root.watched-roots.length > 0; accessible-label: "Rescan all watched folders"; clicked => root.rescan-watched-roots(); }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        Rectangle { height: 1px; background: #3b3631; }
                         Text { text: "Movie artwork lookup"; color: #f46b32; font-size: 12px; font-weight: 700; }
                         Text { text: root.tmdb-token-available ? "A TMDB token is available. Add or replace the saved token below, or remove the stored token." : "Add a TMDB read token to enable manual movie artwork lookup."; color: #ffffffB3; font-size: 11px; wrap: word-wrap; }
                         tmdb-token-editor := ArchiveLineEdit {
@@ -2066,15 +2486,39 @@ export component AppWindow inherits Window {
                             ArchiveButton { text: "Save token"; primary: true; enabled: root.tmdb-token-input != ""; clicked => root.save-tmdb-token(); }
                             ArchiveButton { text: "Remove stored token"; enabled: root.tmdb-token-available; clicked => root.remove-tmdb-token(); }
                         }
+                        Rectangle { height: 1px; background: #3b3631; }
+                        Text { text: "Subtitle search"; color: #f46b32; font-size: 12px; font-weight: 700; }
+                        Text { text: root.opensubtitles-credentials-available ? "Credentials are stored securely and never shown here. Replace them by entering new values." : "Configure OpenSubtitles to search by title. The API key supports search; a bearer token is also needed to download."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                        ArchiveLineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.opensubtitles-api-key-input;
+                            placeholder-text: "OpenSubtitles API key";
+                            password: true;
+                            accessible-label: "OpenSubtitles API key. Input is masked and is not prefilled.";
+                        }
+                        ArchiveLineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.opensubtitles-bearer-token-input;
+                            placeholder-text: "Bearer token (optional for search)";
+                            password: true;
+                            accessible-label: "OpenSubtitles bearer token. Input is masked and is not prefilled.";
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            ArchiveButton { text: "Save credentials"; primary: true; enabled: root.opensubtitles-api-key-input != ""; clicked => root.save-opensubtitles-credentials(root.opensubtitles-api-key-input, root.opensubtitles-bearer-token-input); }
+                            ArchiveButton { text: "Remove credentials"; enabled: root.opensubtitles-credentials-available; clicked => root.remove-opensubtitles-credentials(); }
+                        }
+                        if root.opensubtitles-status != "": Text { text: root.opensubtitles-status; color: #ffffffB3; font-size: 10px; wrap: word-wrap; accessible-label: "OpenSubtitles status: " + root.opensubtitles-status; }
                         if root.settings-status != "": Text {
                             text: root.settings-status;
                             color: root.settings-error ? #ff9a85 : #ffffff;
                             font-size: 11px;
                             wrap: word-wrap;
-                            accessible-label: "Artwork options status: " + root.settings-status;
+                            accessible-label: "Options status: " + root.settings-status;
                         }
-                        Rectangle { vertical-stretch: 1; }
-                        Text { text: "Automatic music artwork sends the track title and artist to YouTube. The MusicBrainz fallback may also use the album tag. Native media paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                        Text { text: "When local music artwork is missing, automatic online lookup sends the track title and artist to YouTube. The MusicBrainz fallback may also send the album tag. Native media paths are never sent."; color: #ffffffB3; font-size: 10px; wrap: word-wrap; }
+                            }
+                        }
                     }
                 }
             }
@@ -2150,6 +2594,97 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+export component PictureInPictureWindow inherits Window {
+    title: "Première · Picture in picture";
+    preferred-width: 480px;
+    preferred-height: 270px;
+    min-width: 280px;
+    min-height: 158px;
+    always-on-top: true;
+    background: #080808;
+    default-font-family: "Inter";
+
+    in property <image> video-frame;
+    in property <bool> has-video-frame: false;
+    in property <string> current-title: "Video";
+    in property <string> player-state: "Ready";
+    in property <bool> can-toggle-pause: false;
+    in property <bool> is-paused: false;
+
+    callback toggle-pause();
+    callback return-to-player();
+    callback close-picture-in-picture();
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #080808;
+        clip: true;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.video-frame;
+            image-fit: contain;
+        }
+        if !root.has-video-frame: Text {
+            x: 16px;
+            y: 16px;
+            width: parent.width - 32px;
+            height: parent.height - 32px;
+            text: root.player-state == "Playback error" ? "Playback error" : "Waiting for a video frame…";
+            color: #ffffffB3;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            x: 0px;
+            y: parent.height - 54px;
+            width: parent.width;
+            height: 54px;
+            background: #141312D8;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                Text {
+                    text: root.current-title;
+                    color: #ffffff;
+                    font-size: 11px;
+                    font-weight: 650;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    accessible-label: root.current-title;
+                }
+                ArchiveButton {
+                    width: 42px;
+                    height: 38px;
+                    style: "icon";
+                    primary: true;
+                    text: root.player-state == "Finished" ? "↻" : root.is-paused || root.player-state == "Ready" ? "▶" : "Ⅱ";
+                    accessible-label: root.player-state == "Finished" ? "Replay video" : root.is-paused || root.player-state == "Ready" ? "Play video" : "Pause video";
+                    enabled: root.can-toggle-pause;
+                    clicked => root.toggle-pause();
+                }
+                ArchiveButton {
+                    text: "Return";
+                    accessible-label: "Return to the main video player";
+                    clicked => root.return-to-player();
+                }
+                ArchiveButton {
+                    width: 34px;
+                    height: 34px;
+                    style: "icon";
+                    text: "×";
+                    accessible-label: "Close picture-in-picture window";
+                    clicked => root.close-picture-in-picture();
                 }
             }
         }

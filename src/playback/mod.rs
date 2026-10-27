@@ -2,10 +2,10 @@ mod ffi;
 pub mod frame;
 pub mod queue;
 
-use crate::model::{Track, TrackId};
-use crate::playback::ffi::{PlayerState, VlcEngine};
+use crate::model::{Track, TrackId, TrackSource};
+use crate::playback::ffi::{PlayerState, VlcEngine, VlcError};
 use crate::playback::frame::FrameMailbox;
-use crate::playback::queue::{PlaybackQueue, RepeatMode};
+use crate::playback::queue::{PlaybackQueue, QueueCheckpoint, RepeatMode};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 const COMMAND_CAPACITY: usize = 32;
 const POLL_INTERVAL: Duration = Duration::from_millis(160);
+const OPENING_MEDIA_MESSAGE: &str = "Opening media file…";
 const RESUME_SEEK_READY_TIMEOUT: Duration = Duration::from_secs(10);
 // App-generated seek IDs start at 1, so zero marks a queue-owned resume seek.
 const RESUME_SEEK_REQUEST_ID: u64 = 0;
@@ -21,6 +22,10 @@ pub const MAX_VOLUME_PERCENT: i32 = 100;
 pub const MIN_PLAYBACK_RATE: f32 = 0.25;
 pub const MAX_PLAYBACK_RATE: f32 = 4.0;
 pub const MAX_MEDIA_DELAY_US: i64 = 60_000_000;
+pub const EQUALIZER_BAND_COUNT: usize = 10;
+pub const MIN_EQUALIZER_GAIN_DB: f32 = -20.0;
+pub const MAX_EQUALIZER_GAIN_DB: f32 = 20.0;
+pub const MAX_SLEEP_TIMER_MS: u64 = 24 * 60 * 60 * 1_000;
 pub const MOVIE_FORMAT: &str = "MOVIE";
 
 pub fn is_movie(track: &Track) -> bool {
@@ -31,6 +36,46 @@ pub fn is_movie(track: &Track) -> bool {
 pub struct PlaybackTrack {
     pub id: i32,
     pub name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EqualizerSettings {
+    pub enabled: bool,
+    pub preamp_db: f32,
+    pub bands_db: [f32; EQUALIZER_BAND_COUNT],
+    pub preset_index: Option<usize>,
+}
+
+impl Default for EqualizerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            preamp_db: 0.0,
+            bands_db: [0.0; EQUALIZER_BAND_COUNT],
+            preset_index: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AbRepeatState {
+    pub a_ms: Option<i64>,
+    pub b_ms: Option<i64>,
+}
+
+impl AbRepeatState {
+    fn range(self) -> Option<(i64, i64)> {
+        match (self.a_ms, self.b_ms) {
+            (Some(a_ms), Some(b_ms)) if a_ms >= 0 && b_ms > a_ms => Some((a_ms, b_ms)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AbPoint {
+    A,
+    B,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +94,8 @@ pub struct PlaybackSnapshot {
     pub queue_revision: u64,
     pub repeat_mode: RepeatMode,
     pub shuffle: bool,
+    pub queue_checkpoint: QueueCheckpoint,
+    pub queue_restored: bool,
     pub position_ms: i64,
     pub duration_ms: i64,
     pub audio_tracks: Vec<PlaybackTrack>,
@@ -61,6 +108,12 @@ pub struct PlaybackSnapshot {
     pub subtitle_delay_us: i64,
     pub volume_percent: i32,
     pub playback_rate: f32,
+    pub equalizer_settings: EqualizerSettings,
+    pub equalizer_band_frequencies_hz: Vec<f32>,
+    pub equalizer_presets: Vec<String>,
+    pub ab_repeat: AbRepeatState,
+    pub sleep_timer_remaining_ms: Option<u64>,
+    pub cast_target: Option<String>,
     pub seek_ack: ControlAcknowledgement,
     pub volume_ack: ControlAcknowledgement,
     pub playback_rate_ack: ControlAcknowledgement,
@@ -90,6 +143,8 @@ impl Default for PlaybackSnapshot {
             queue_revision: 0,
             repeat_mode: RepeatMode::Off,
             shuffle: false,
+            queue_checkpoint: QueueCheckpoint::default(),
+            queue_restored: false,
             position_ms: 0,
             duration_ms: 0,
             audio_tracks: Vec::new(),
@@ -102,6 +157,12 @@ impl Default for PlaybackSnapshot {
             subtitle_delay_us: 0,
             volume_percent: 100,
             playback_rate: 1.0,
+            equalizer_settings: EqualizerSettings::default(),
+            equalizer_band_frequencies_hz: Vec::new(),
+            equalizer_presets: Vec::new(),
+            ab_repeat: AbRepeatState::default(),
+            sleep_timer_remaining_ms: None,
+            cast_target: None,
             seek_ack: ControlAcknowledgement::default(),
             volume_ack: ControlAcknowledgement::default(),
             playback_rate_ack: ControlAcknowledgement::default(),
@@ -143,7 +204,14 @@ pub enum PlaybackCommand {
         start_index: usize,
         resume_position_ms: Option<i64>,
     },
+    RestoreQueue {
+        tracks: Vec<Track>,
+        checkpoint: QueueCheckpoint,
+    },
     TogglePause,
+    SetPaused {
+        paused: bool,
+    },
     Stop,
     SeekTo {
         request_id: u64,
@@ -158,6 +226,35 @@ pub enum PlaybackCommand {
     SetPlaybackRate {
         request_id: u64,
         rate: f32,
+    },
+    SetEqualizerSettings(EqualizerSettings),
+    SetEqualizerEnabled {
+        enabled: bool,
+    },
+    SetEqualizerPreamp {
+        gain_db: f32,
+    },
+    SetEqualizerBand {
+        index: usize,
+        gain_db: f32,
+    },
+    SetEqualizerPreset {
+        index: usize,
+    },
+    SetAbRepeatPoint {
+        point: AbPoint,
+        track_id: TrackId,
+        load_generation: u64,
+    },
+    ClearAbRepeat {
+        track_id: TrackId,
+        load_generation: u64,
+    },
+    SetSleepTimer {
+        duration_ms: Option<u64>,
+    },
+    SetCastTarget {
+        address: Option<String>,
     },
     Previous,
     Next,
@@ -310,6 +407,13 @@ fn invalid_command_message(command: &PlaybackCommand) -> Option<String> {
             resume_position_ms: Some(position_ms),
             ..
         } if *position_ms < 0 => Some("Resume position cannot be negative.".to_owned()),
+        PlaybackCommand::RestoreQueue { tracks, checkpoint }
+            if !checkpoint.is_valid()
+                || tracks.iter().map(|track| track.id).collect::<Vec<_>>()
+                    != checkpoint.entry_ids =>
+        {
+            Some("The saved playback queue is invalid.".to_owned())
+        }
         PlaybackCommand::SetVolume { volume_percent, .. }
             if !valid_volume_percent(*volume_percent) =>
         {
@@ -318,6 +422,30 @@ fn invalid_command_message(command: &PlaybackCommand) -> Option<String> {
         PlaybackCommand::SetPlaybackRate { rate, .. } if !valid_playback_rate(*rate) => {
             Some("Playback rate must be between 0.25× and 4×.".to_owned())
         }
+        PlaybackCommand::SetEqualizerSettings(settings) if !valid_equalizer_settings(settings) => {
+            Some("Equalizer gains must be finite and between −20 and +20 dB.".to_owned())
+        }
+        PlaybackCommand::SetEqualizerPreamp { gain_db } if !valid_equalizer_gain(*gain_db) => {
+            Some("Equalizer preamp must be finite and between −20 and +20 dB.".to_owned())
+        }
+        PlaybackCommand::SetEqualizerBand { index, gain_db }
+            if *index >= EQUALIZER_BAND_COUNT || !valid_equalizer_gain(*gain_db) =>
+        {
+            Some(
+                "Equalizer band must be one of ten bands with a gain between −20 and +20 dB."
+                    .to_owned(),
+            )
+        }
+        PlaybackCommand::SetSleepTimer {
+            duration_ms: Some(duration_ms),
+        } if !valid_sleep_timer_duration(*duration_ms) => {
+            Some("Sleep timer must be between 1 millisecond and 24 hours.".to_owned())
+        }
+        PlaybackCommand::SetCastTarget {
+            address: Some(address),
+        } if !valid_cast_address(address) => Some(
+            "Cast target must be an IP address or a hostname without spaces or options.".to_owned(),
+        ),
         PlaybackCommand::SelectAudioTrack { track_id, .. } if *track_id < 0 => {
             Some("Choose an available audio track.".to_owned())
         }
@@ -351,6 +479,45 @@ fn valid_volume_percent(volume: i32) -> bool {
 
 fn valid_playback_rate(rate: f32) -> bool {
     rate.is_finite() && (MIN_PLAYBACK_RATE..=MAX_PLAYBACK_RATE).contains(&rate)
+}
+
+fn valid_equalizer_gain(gain_db: f32) -> bool {
+    gain_db.is_finite() && (MIN_EQUALIZER_GAIN_DB..=MAX_EQUALIZER_GAIN_DB).contains(&gain_db)
+}
+
+fn valid_equalizer_settings(settings: &EqualizerSettings) -> bool {
+    valid_equalizer_gain(settings.preamp_db)
+        && settings.bands_db.iter().copied().all(valid_equalizer_gain)
+}
+
+fn valid_sleep_timer_duration(duration_ms: u64) -> bool {
+    (1..=MAX_SLEEP_TIMER_MS).contains(&duration_ms)
+}
+
+fn valid_cast_address(address: &str) -> bool {
+    if address.is_empty() || address.len() > 253 || address.trim() != address {
+        return false;
+    }
+    if address.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    let hostname = address.strip_suffix('.').unwrap_or(address);
+    !hostname.is_empty()
+        && hostname.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 fn seek_target_ms(position_ms: i64, duration_ms: i64) -> Option<i64> {
@@ -439,6 +606,55 @@ fn prepare_replay(worker: &mut WorkerState, snapshot: &Mutex<PlaybackSnapshot>) 
     });
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PauseIntentAction {
+    Noop,
+    SetPaused(bool),
+    StartRestored,
+    ReplayEnded,
+}
+
+fn pause_intent_action(
+    paused: bool,
+    has_current: bool,
+    restore_pending_play: bool,
+    player_state: PlayerState,
+    loading: bool,
+) -> PauseIntentAction {
+    if !has_current {
+        return PauseIntentAction::Noop;
+    }
+    if restore_pending_play {
+        return if paused {
+            PauseIntentAction::Noop
+        } else {
+            PauseIntentAction::StartRestored
+        };
+    }
+    if loading
+        || matches!(
+            player_state,
+            PlayerState::Opening
+                | PlayerState::Buffering
+                | PlayerState::Playing
+                | PlayerState::Paused
+        )
+    {
+        return PauseIntentAction::SetPaused(paused);
+    }
+    match (paused, player_state) {
+        (false, PlayerState::Ended) => PauseIntentAction::ReplayEnded,
+        _ => PauseIntentAction::Noop,
+    }
+}
+
+fn pending_pause_satisfied(paused: bool, player_state: PlayerState) -> bool {
+    matches!(
+        (paused, player_state),
+        (true, PlayerState::Paused) | (false, PlayerState::Playing)
+    )
+}
+
 struct WorkerState {
     queue: PlaybackQueue,
     queue_revision: u64,
@@ -447,6 +663,14 @@ struct WorkerState {
     generation: u64,
     playback_rate: f32,
     pending_seek: Option<(u64, TrackId, u64, i64, Option<Instant>)>,
+    pending_pause: Option<(u64, bool)>,
+    restore_pending_play: bool,
+    restored_position_ms: i64,
+    equalizer_settings: EqualizerSettings,
+    ab_repeat: AbRepeatState,
+    ab_repeat_load_generation: Option<u64>,
+    sleep_timer_deadline: Option<Instant>,
+    cast_target: Option<String>,
 }
 
 impl Default for WorkerState {
@@ -459,6 +683,14 @@ impl Default for WorkerState {
             generation: 0,
             playback_rate: 1.0,
             pending_seek: None,
+            pending_pause: None,
+            restore_pending_play: false,
+            restored_position_ms: 0,
+            equalizer_settings: EqualizerSettings::default(),
+            ab_repeat: AbRepeatState::default(),
+            ab_repeat_load_generation: None,
+            sleep_timer_deadline: None,
+            cast_target: None,
         }
     }
 }
@@ -471,10 +703,13 @@ fn run_worker(
     let mut engine = match VlcEngine::new(Arc::clone(&frames)) {
         Ok(engine) => {
             let runtime_message = format!("libVLC {} ready", engine.version());
+            let (band_frequencies, presets) = engine.equalizer_metadata();
             publish(&snapshot, |state| {
                 state.runtime_checked = true;
                 state.runtime_available = true;
                 state.runtime_message = runtime_message;
+                state.equalizer_band_frequencies_hz = band_frequencies;
+                state.equalizer_presets = presets;
                 state.message = "Choose a local media file to begin.".to_owned();
             });
             Some(engine)
@@ -496,7 +731,15 @@ fn run_worker(
     let mut state = WorkerState::default();
 
     loop {
-        match receiver.recv_timeout(POLL_INTERVAL) {
+        let wait = state
+            .sleep_timer_deadline
+            .map(|deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(POLL_INTERVAL)
+            })
+            .unwrap_or(POLL_INTERVAL);
+        match receiver.recv_timeout(wait) {
             Ok(PlaybackCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Ok(command) => handle_command(
                 command,
@@ -509,9 +752,24 @@ fn run_worker(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
 
+        update_sleep_timer(&mut engine, &mut state, &snapshot);
+        if state
+            .ab_repeat_load_generation
+            .is_some_and(|generation| generation != state.load_generation)
+        {
+            state.ab_repeat = AbRepeatState::default();
+            state.ab_repeat_load_generation = None;
+            publish(&snapshot, |current| {
+                current.ab_repeat = AbRepeatState::default();
+            });
+        }
         let Some(engine) = engine.as_mut() else {
             continue;
         };
+        apply_pending_pause(&mut state, engine);
+        if state.restore_pending_play {
+            continue;
+        }
         if let Some((request_id, track_id, load_generation, position_ms, resume_deadline)) =
             state.pending_seek
         {
@@ -585,7 +843,13 @@ fn run_worker(
             continue;
         }
 
+        let error_event_seen = engine.take_encountered_error();
         let player_state = engine.state();
+        let player_state = if error_event_seen || engine.take_encountered_error() {
+            PlayerState::Error
+        } else {
+            player_state
+        };
         if state.ended_generation == Some(state.generation)
             && matches!(
                 player_state,
@@ -623,16 +887,23 @@ fn run_worker(
                 }
             }
             PlayerState::Error => {
-                let error = engine.error_message();
-                let message = if error.is_empty() {
-                    "VLC could not decode this media or open an audio output. Check the VLC plugins installation.".to_owned()
-                } else {
-                    format!("VLC reported a playback error: {error}")
-                };
-                publish_player_position(engine, &state.queue, &snapshot, &message);
-                publish(&snapshot, |state| state.state = PlaybackUiState::Error);
+                publish_player_error(engine, &state.queue, state.cast_target.is_some(), &snapshot);
             }
             player_state => publish_player_state(engine, player_state, &state.queue, &snapshot),
+        }
+        apply_ab_repeat(engine, &mut state, &snapshot);
+        if let Some((RESUME_SEEK_REQUEST_ID, track_id, load_generation, position_ms, _)) =
+            state.pending_seek
+        {
+            if state.queue.current().map(|track| track.id) == Some(track_id)
+                && state.load_generation == load_generation
+            {
+                let checkpoint = state.queue.checkpoint(position_ms);
+                publish(&snapshot, |current| {
+                    current.position_ms = position_ms;
+                    current.queue_checkpoint = checkpoint;
+                });
+            }
         }
         refresh_media_snapshot(engine, &state.queue, &snapshot);
     }
@@ -654,6 +925,8 @@ fn handle_command(
             start_index,
             resume_position_ms,
         } => {
+            worker.restore_pending_play = false;
+            worker.restored_position_ms = 0;
             worker.generation = worker.generation.wrapping_add(1);
             worker.ended_generation = None;
             cancel_pending_seek(
@@ -663,6 +936,7 @@ fn handle_command(
             );
             worker.queue_revision = worker.queue_revision.wrapping_add(1);
             worker.load_generation = worker.load_generation.wrapping_add(1);
+            publish(snapshot, |state| state.queue_restored = true);
             if worker.queue.replace(tracks, start_index) {
                 publish_queue_snapshot(&worker.queue, worker.queue_revision, snapshot);
                 if let Some(engine) = engine.as_mut() {
@@ -676,6 +950,9 @@ fn handle_command(
                     );
                     if started {
                         bind_resume_seek(worker, resume_position_ms);
+                        if let Some(position_ms) = resume_position_ms {
+                            publish_checkpoint_position(&worker.queue, snapshot, position_ms);
+                        }
                     }
                 } else {
                     publish_unavailable_current(
@@ -706,18 +983,93 @@ fn handle_command(
                 );
             }
         }
+        PlaybackCommand::RestoreQueue { tracks, checkpoint } => {
+            worker.generation = worker.generation.wrapping_add(1);
+            worker.load_generation = worker.load_generation.wrapping_add(1);
+            worker.queue_revision = worker.queue_revision.wrapping_add(1);
+            worker.ended_generation = None;
+            cancel_pending_seek(
+                &mut worker.pending_seek,
+                snapshot,
+                "Seek was canceled because the playback queue was restored.",
+            );
+            if !worker.queue.restore(tracks, &checkpoint) {
+                publish(snapshot, |state| {
+                    state.message = "The saved playback queue is invalid.".to_owned()
+                });
+                return;
+            }
+            if let Some(engine) = engine.as_mut() {
+                engine.stop_and_clear();
+            }
+            frames.reset();
+            clear_media_snapshot(snapshot);
+            worker.restore_pending_play = worker.queue.current().is_some();
+            worker.restored_position_ms = checkpoint.position_ms;
+            publish(snapshot, |state| {
+                state.position_ms = checkpoint.position_ms;
+                state.queue_restored = true;
+            });
+            publish_queue_snapshot(&worker.queue, worker.queue_revision, snapshot);
+            let restored_checkpoint = worker.queue.checkpoint(checkpoint.position_ms);
+            publish(snapshot, |state| {
+                state.load_generation = worker.load_generation;
+                state.current_id = worker.queue.current().map(|track| track.id);
+                state.current_is_video = worker.queue.current().is_some_and(is_movie);
+                state.current_title = worker
+                    .queue
+                    .current()
+                    .map(|track| track.title.clone())
+                    .unwrap_or_default();
+                state.position_ms = checkpoint.position_ms;
+                state.duration_ms = 0;
+                state.state = if engine.is_some() {
+                    PlaybackUiState::Idle
+                } else {
+                    PlaybackUiState::Unavailable
+                };
+                state.queue_checkpoint = restored_checkpoint;
+                state.queue_restored = true;
+                state.message = if engine.is_some() {
+                    "Queue restored. Press Play to resume.".to_owned()
+                } else {
+                    runtime_error.to_owned()
+                };
+            });
+        }
         PlaybackCommand::TogglePause => {
+            worker.pending_pause = None;
             let Some(engine) = engine.as_mut() else {
                 publish(snapshot, |state| state.message = runtime_error.to_owned());
                 return;
             };
+            let player_state = engine.state();
+            let ui_state = lock_snapshot(snapshot).state;
             if worker.queue.current().is_none() {
                 publish(snapshot, |state| {
                     state.message = "Choose a track before using Play/Pause.".to_owned();
                 });
             } else {
-                let replaying_ended = engine.state() == PlayerState::Ended;
-                if replaying_ended {
+                if worker.restore_pending_play {
+                    prepare_replay(worker, snapshot);
+                    let resume_position = worker.restored_position_ms;
+                    if start_current(
+                        engine,
+                        &worker.queue,
+                        worker.queue_revision,
+                        worker.load_generation,
+                        snapshot,
+                        worker.playback_rate,
+                    ) {
+                        worker.restore_pending_play = false;
+                        if resume_position > 0 {
+                            bind_resume_seek(worker, Some(resume_position));
+                            publish_checkpoint_position(&worker.queue, snapshot, resume_position);
+                        }
+                    } else {
+                        publish_checkpoint_position(&worker.queue, snapshot, resume_position);
+                    }
+                } else if player_state == PlayerState::Ended {
                     prepare_replay(worker, snapshot);
                     start_current(
                         engine,
@@ -727,6 +1079,17 @@ fn handle_command(
                         snapshot,
                         worker.playback_rate,
                     );
+                } else if matches!(
+                    ui_state,
+                    PlaybackUiState::Loading | PlaybackUiState::Playing | PlaybackUiState::Paused
+                ) {
+                    let desired = ui_state != PlaybackUiState::Paused;
+                    if matches!(player_state, PlayerState::Playing | PlayerState::Paused) {
+                        engine.set_paused(desired);
+                    } else if player_state != PlayerState::Error {
+                        worker.pending_pause = Some((worker.load_generation, desired));
+                    }
+                    publish_player_position(engine, &worker.queue, snapshot, "");
                 } else {
                     worker.generation = worker.generation.wrapping_add(1);
                     worker.ended_generation = None;
@@ -734,9 +1097,79 @@ fn handle_command(
                     match engine.toggle_pause() {
                         Ok(()) => publish_player_position(engine, &worker.queue, snapshot, ""),
                         Err(error) => {
-                            publish(snapshot, |state| state.message = error.to_string());
+                            let message = safe_vlc_error(&error, worker.queue.current());
+                            publish(snapshot, |state| state.message = message);
                         }
                     }
+                }
+            }
+        }
+        PlaybackCommand::SetPaused { paused } => {
+            let Some(engine) = engine.as_mut() else {
+                publish(snapshot, |state| state.message = runtime_error.to_owned());
+                return;
+            };
+            let loading = lock_snapshot(snapshot).state == PlaybackUiState::Loading;
+            let player_state = engine.state();
+            let action = pause_intent_action(
+                paused,
+                worker.queue.current().is_some(),
+                worker.restore_pending_play,
+                player_state,
+                loading,
+            );
+            match action {
+                PauseIntentAction::Noop => {
+                    if worker.queue.current().is_none() && !paused {
+                        publish(snapshot, |state| {
+                            state.message = "Choose a track before using Play/Pause.".to_owned();
+                        });
+                    }
+                }
+                PauseIntentAction::SetPaused(desired) => {
+                    worker.generation = worker.generation.wrapping_add(1);
+                    worker.ended_generation = None;
+                    let ready = matches!(player_state, PlayerState::Playing | PlayerState::Paused);
+                    if matches!(player_state, PlayerState::Ended | PlayerState::Error) {
+                        worker.pending_pause = None;
+                    } else if ready {
+                        worker.pending_pause = None;
+                        engine.set_paused(desired);
+                    } else {
+                        worker.pending_pause = Some((worker.load_generation, desired));
+                    }
+                    publish_player_position(engine, &worker.queue, snapshot, "");
+                }
+                PauseIntentAction::StartRestored => {
+                    prepare_replay(worker, snapshot);
+                    let resume_position = worker.restored_position_ms;
+                    if start_current(
+                        engine,
+                        &worker.queue,
+                        worker.queue_revision,
+                        worker.load_generation,
+                        snapshot,
+                        worker.playback_rate,
+                    ) {
+                        worker.restore_pending_play = false;
+                        if resume_position > 0 {
+                            bind_resume_seek(worker, Some(resume_position));
+                            publish_checkpoint_position(&worker.queue, snapshot, resume_position);
+                        }
+                    } else {
+                        publish_checkpoint_position(&worker.queue, snapshot, resume_position);
+                    }
+                }
+                PauseIntentAction::ReplayEnded => {
+                    prepare_replay(worker, snapshot);
+                    start_current(
+                        engine,
+                        &worker.queue,
+                        worker.queue_revision,
+                        worker.load_generation,
+                        snapshot,
+                        worker.playback_rate,
+                    );
                 }
             }
         }
@@ -751,13 +1184,21 @@ fn handle_command(
                 "Seek was canceled because playback stopped.",
             );
             if worker.queue.current().is_some() {
+                worker.restore_pending_play = true;
+                worker.restored_position_ms = 0;
                 worker.generation = worker.generation.wrapping_add(1);
+                worker.load_generation = worker.load_generation.wrapping_add(1);
                 worker.ended_generation = Some(worker.generation);
+                worker.ab_repeat = AbRepeatState::default();
+                worker.ab_repeat_load_generation = None;
                 engine.stop();
                 publish(snapshot, |state| {
                     state.state = PlaybackUiState::Idle;
+                    state.load_generation = worker.load_generation;
                     state.position_ms = 0;
                     state.duration_ms = 0;
+                    state.queue_checkpoint = worker.queue.checkpoint(0);
+                    state.ab_repeat = AbRepeatState::default();
                     state.message = "Playback stopped.".to_owned();
                 });
             } else {
@@ -825,7 +1266,7 @@ fn handle_command(
                 .and_then(|engine| {
                     engine
                         .set_volume(volume_percent)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish(snapshot, |state| match result {
                 Ok(()) => {
@@ -855,7 +1296,7 @@ fn handle_command(
                 .and_then(|engine| {
                     engine
                         .set_playback_rate(rate)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish(snapshot, |state| match result {
                 Ok(()) => {
@@ -870,8 +1311,91 @@ fn handle_command(
                 }
             });
         }
+        PlaybackCommand::SetEqualizerSettings(settings) => {
+            commit_equalizer_settings(settings, engine, worker, snapshot, runtime_error);
+        }
+        PlaybackCommand::SetEqualizerEnabled { enabled } => {
+            let mut settings = worker.equalizer_settings;
+            settings.enabled = enabled;
+            commit_equalizer_settings(settings, engine, worker, snapshot, runtime_error);
+        }
+        PlaybackCommand::SetEqualizerPreamp { gain_db } => {
+            let mut settings = worker.equalizer_settings;
+            settings.preamp_db = gain_db;
+            settings.preset_index = None;
+            commit_equalizer_settings(settings, engine, worker, snapshot, runtime_error);
+        }
+        PlaybackCommand::SetEqualizerBand { index, gain_db } => {
+            let mut settings = worker.equalizer_settings;
+            let Some(band) = settings.bands_db.get_mut(index) else {
+                publish(snapshot, |state| {
+                    state.message =
+                        "Equalizer band index is outside the available range.".to_owned()
+                });
+                return;
+            };
+            *band = gain_db;
+            settings.preset_index = None;
+            commit_equalizer_settings(settings, engine, worker, snapshot, runtime_error);
+        }
+        PlaybackCommand::SetEqualizerPreset { index } => {
+            let settings = engine
+                .as_ref()
+                .ok_or_else(|| runtime_error.to_owned())
+                .and_then(|engine| {
+                    engine
+                        .equalizer_preset_settings(index)
+                        .map_err(|error| error.to_string())
+                });
+            match settings {
+                Ok(settings) => {
+                    commit_equalizer_settings(settings, engine, worker, snapshot, runtime_error);
+                }
+                Err(message) => publish(snapshot, |state| state.message = message),
+            }
+        }
+        PlaybackCommand::SetAbRepeatPoint {
+            point,
+            track_id,
+            load_generation,
+        } => {
+            set_ab_repeat_point(point, track_id, load_generation, engine, worker, snapshot);
+        }
+        PlaybackCommand::ClearAbRepeat {
+            track_id,
+            load_generation,
+        } => {
+            if current_media_matches(
+                track_id,
+                load_generation,
+                &worker.queue,
+                worker.load_generation,
+                snapshot,
+            ) {
+                worker.ab_repeat = AbRepeatState::default();
+                worker.ab_repeat_load_generation = None;
+                publish(snapshot, |state| state.ab_repeat = AbRepeatState::default());
+            }
+        }
+        PlaybackCommand::SetSleepTimer { duration_ms } => {
+            worker.sleep_timer_deadline =
+                duration_ms.map(|duration_ms| Instant::now() + Duration::from_millis(duration_ms));
+            publish(snapshot, |state| {
+                state.sleep_timer_remaining_ms = duration_ms;
+                state.message = if duration_ms.is_some() {
+                    "Sleep timer set.".to_owned()
+                } else {
+                    "Sleep timer canceled.".to_owned()
+                };
+            });
+        }
+        PlaybackCommand::SetCastTarget { address } => {
+            set_cast_target(address, engine, worker, snapshot, runtime_error);
+        }
         PlaybackCommand::Previous => {
             if worker.queue.previous().is_some() {
+                worker.restore_pending_play = false;
+                worker.restored_position_ms = 0;
                 worker.generation = worker.generation.wrapping_add(1);
                 worker.load_generation = worker.load_generation.wrapping_add(1);
                 worker.ended_generation = None;
@@ -910,6 +1434,8 @@ fn handle_command(
         }
         PlaybackCommand::Next => {
             if worker.queue.advance_next().is_some() {
+                worker.restore_pending_play = false;
+                worker.restored_position_ms = 0;
                 worker.generation = worker.generation.wrapping_add(1);
                 worker.load_generation = worker.load_generation.wrapping_add(1);
                 worker.ended_generation = None;
@@ -985,7 +1511,7 @@ fn handle_command(
                     }
                     engine
                         .select_audio_track(track_id)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish_control_result(snapshot, result);
         }
@@ -1021,7 +1547,7 @@ fn handle_command(
                     }
                     engine
                         .select_subtitle_track(track_id)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish_control_result(snapshot, result);
         }
@@ -1045,7 +1571,7 @@ fn handle_command(
                 .and_then(|engine| {
                     engine
                         .add_subtitle(&path)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish_control_result(snapshot, result);
         }
@@ -1069,7 +1595,7 @@ fn handle_command(
                 .and_then(|engine| {
                     engine
                         .set_audio_delay(delay_us)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish_control_result(snapshot, result);
         }
@@ -1093,7 +1619,7 @@ fn handle_command(
                 .and_then(|engine| {
                     engine
                         .set_subtitle_delay(delay_us)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish_control_result(snapshot, result);
         }
@@ -1117,13 +1643,15 @@ fn handle_command(
                 .and_then(|engine| {
                     engine
                         .select_chapter(chapter)
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| safe_vlc_error(&error, worker.queue.current()))
                 });
             publish_control_result(snapshot, result);
         }
         PlaybackCommand::QueueJump { revision, position } => {
             match queue_jump(&mut worker.queue, revision, worker.queue_revision, position) {
                 Ok(()) => {
+                    worker.restore_pending_play = false;
+                    worker.restored_position_ms = 0;
                     worker.generation = worker.generation.wrapping_add(1);
                     worker.load_generation = worker.load_generation.wrapping_add(1);
                     worker.ended_generation = None;
@@ -1167,6 +1695,7 @@ fn handle_command(
             }
         }
         PlaybackCommand::QueueRemove { revision, position } => {
+            let keep_ready = worker.restore_pending_play;
             let was_paused = engine
                 .as_ref()
                 .is_some_and(|engine| engine.state() == PlayerState::Paused);
@@ -1179,6 +1708,8 @@ fn handle_command(
                 Ok(removed_current) => {
                     publish_queue_snapshot(&worker.queue, worker.queue_revision, snapshot);
                     if removed_current {
+                        worker.restore_pending_play = keep_ready;
+                        worker.restored_position_ms = 0;
                         worker.generation = worker.generation.wrapping_add(1);
                         worker.load_generation = worker.load_generation.wrapping_add(1);
                         worker.ended_generation = None;
@@ -1188,7 +1719,25 @@ fn handle_command(
                             "Seek was canceled because the playback item changed.",
                         );
                         if worker.queue.current().is_some() {
-                            if let Some(engine) = engine.as_mut() {
+                            if keep_ready {
+                                if let Some(engine) = engine.as_mut() {
+                                    engine.stop_and_clear();
+                                    publish_ready_current(
+                                        &worker.queue,
+                                        worker.queue_revision,
+                                        worker.load_generation,
+                                        snapshot,
+                                    );
+                                } else {
+                                    publish_unavailable_current(
+                                        &worker.queue,
+                                        worker.queue_revision,
+                                        worker.load_generation,
+                                        snapshot,
+                                        runtime_error,
+                                    );
+                                }
+                            } else if let Some(engine) = engine.as_mut() {
                                 start_current(
                                     engine,
                                     &worker.queue,
@@ -1198,7 +1747,7 @@ fn handle_command(
                                     worker.playback_rate,
                                 );
                                 if was_paused {
-                                    engine.set_paused(true);
+                                    worker.pending_pause = Some((worker.load_generation, true));
                                 }
                             } else {
                                 publish_unavailable_current(
@@ -1258,6 +1807,9 @@ fn handle_command(
             worker.queue_revision = worker.queue_revision.wrapping_add(1);
             publish_queue_snapshot(&worker.queue, worker.queue_revision, snapshot);
             if was_empty {
+                worker.restore_pending_play = false;
+                worker.restored_position_ms = 0;
+                publish(snapshot, |state| state.queue_restored = true);
                 worker.generation = worker.generation.wrapping_add(1);
                 worker.load_generation = worker.load_generation.wrapping_add(1);
                 worker.ended_generation = None;
@@ -1305,6 +1857,301 @@ fn current_media_matches(
     }
 }
 
+fn safe_vlc_error(error: &VlcError, track: Option<&Track>) -> String {
+    if track.is_some_and(|track| matches!(&track.source, TrackSource::Network(_))) {
+        match error {
+            VlcError::InvalidControl(_) => error.to_string(),
+            VlcError::ControlFailed { action, .. } => format!("VLC could not {action}."),
+            _ => "VLC could not control this network stream.".to_owned(),
+        }
+    } else {
+        error.to_string()
+    }
+}
+
+fn commit_equalizer_settings(
+    settings: EqualizerSettings,
+    engine: &mut Option<VlcEngine>,
+    worker: &mut WorkerState,
+    snapshot: &Mutex<PlaybackSnapshot>,
+    runtime_error: &str,
+) {
+    if let Some(engine) = engine.as_ref() {
+        if let Err(error) = engine.set_equalizer_settings(&settings) {
+            publish(snapshot, |state| state.message = error.to_string());
+            return;
+        }
+    }
+    worker.equalizer_settings = settings;
+    publish(snapshot, |state| {
+        state.equalizer_settings = settings;
+        state.message = if engine.is_some() {
+            String::new()
+        } else {
+            runtime_error.to_owned()
+        };
+    });
+}
+
+fn set_ab_repeat_point(
+    point: AbPoint,
+    track_id: TrackId,
+    load_generation: u64,
+    engine: &Option<VlcEngine>,
+    worker: &mut WorkerState,
+    snapshot: &Mutex<PlaybackSnapshot>,
+) {
+    if !current_media_matches(
+        track_id,
+        load_generation,
+        &worker.queue,
+        worker.load_generation,
+        snapshot,
+    ) {
+        return;
+    }
+    let Some(engine) = engine.as_ref() else {
+        publish(snapshot, |state| {
+            state.message = "VLC is unavailable.".to_owned()
+        });
+        return;
+    };
+    let position_ms = engine.time_ms().max(0);
+    let duration_ms = engine.length_ms();
+    if duration_ms <= 0 || position_ms > duration_ms || !engine.is_seekable() {
+        worker.ab_repeat = AbRepeatState::default();
+        worker.ab_repeat_load_generation = None;
+        publish(snapshot, |state| {
+            state.ab_repeat = AbRepeatState::default();
+            state.message = "A–B repeat requires seekable media with a known duration.".to_owned();
+        });
+        return;
+    }
+
+    match point {
+        AbPoint::A => {
+            worker.ab_repeat.a_ms = Some(position_ms);
+            if worker
+                .ab_repeat
+                .b_ms
+                .is_some_and(|b_ms| b_ms <= position_ms)
+            {
+                worker.ab_repeat.b_ms = None;
+            }
+        }
+        AbPoint::B => {
+            if worker.ab_repeat.a_ms.is_none_or(|a_ms| position_ms <= a_ms) {
+                worker.ab_repeat = AbRepeatState::default();
+                worker.ab_repeat_load_generation = None;
+                publish(snapshot, |state| {
+                    state.ab_repeat = AbRepeatState::default();
+                    state.message = "Set point A before setting a later point B.".to_owned();
+                });
+                return;
+            }
+            worker.ab_repeat.b_ms = Some(position_ms);
+        }
+    }
+    worker.ab_repeat_load_generation = Some(worker.load_generation);
+    publish(snapshot, |state| {
+        state.ab_repeat = worker.ab_repeat;
+        state.message.clear();
+    });
+}
+
+fn apply_ab_repeat(
+    engine: &VlcEngine,
+    worker: &mut WorkerState,
+    snapshot: &Mutex<PlaybackSnapshot>,
+) {
+    let Some((a_ms, b_ms)) = worker.ab_repeat.range() else {
+        return;
+    };
+    if worker.ab_repeat_load_generation != Some(worker.load_generation)
+        || worker.queue.current().is_none()
+        || worker.pending_seek.is_some()
+        || engine.state() != PlayerState::Playing
+    {
+        return;
+    }
+    let duration_ms = engine.length_ms();
+    if duration_ms <= 0 || b_ms > duration_ms || !engine.is_seekable() {
+        worker.ab_repeat = AbRepeatState::default();
+        worker.ab_repeat_load_generation = None;
+        publish(snapshot, |state| {
+            state.ab_repeat = AbRepeatState::default();
+            state.message =
+                "A–B repeat was cleared because the range is no longer seekable.".to_owned();
+        });
+        return;
+    }
+    if engine.time_ms() >= b_ms {
+        match engine.seek(a_ms, duration_ms) {
+            Ok(position_ms) => {
+                let checkpoint = worker.queue.checkpoint(position_ms);
+                publish(snapshot, |state| {
+                    state.position_ms = position_ms;
+                    state.queue_checkpoint = checkpoint;
+                });
+            }
+            Err(_) => {
+                worker.ab_repeat = AbRepeatState::default();
+                worker.ab_repeat_load_generation = None;
+                publish(snapshot, |state| {
+                    state.ab_repeat = AbRepeatState::default();
+                    state.message = "A–B repeat was cleared because VLC could not seek.".to_owned();
+                });
+            }
+        }
+    }
+}
+
+fn update_sleep_timer(
+    engine: &mut Option<VlcEngine>,
+    worker: &mut WorkerState,
+    snapshot: &Mutex<PlaybackSnapshot>,
+) {
+    let Some(deadline) = worker.sleep_timer_deadline else {
+        publish(snapshot, |state| state.sleep_timer_remaining_ms = None);
+        return;
+    };
+    let now = Instant::now();
+    if now < deadline {
+        let remaining_ms = deadline
+            .duration_since(now)
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        publish(snapshot, |state| {
+            state.sleep_timer_remaining_ms = Some(remaining_ms)
+        });
+        return;
+    }
+
+    worker.sleep_timer_deadline = None;
+    let active = !worker.restore_pending_play
+        && worker.queue.current().is_some()
+        && matches!(
+            lock_snapshot(snapshot).state,
+            PlaybackUiState::Loading | PlaybackUiState::Playing | PlaybackUiState::Paused
+        );
+    if active {
+        cancel_pending_seek(
+            &mut worker.pending_seek,
+            snapshot,
+            "Seek was canceled because the sleep timer stopped playback.",
+        );
+        if let Some(engine) = engine.as_ref() {
+            engine.stop();
+        }
+        worker.restore_pending_play = true;
+        worker.restored_position_ms = 0;
+        worker.generation = worker.generation.wrapping_add(1);
+        worker.load_generation = worker.load_generation.wrapping_add(1);
+        worker.ended_generation = Some(worker.generation);
+        worker.ab_repeat = AbRepeatState::default();
+        worker.ab_repeat_load_generation = None;
+        publish(snapshot, |state| {
+            state.sleep_timer_remaining_ms = None;
+            state.load_generation = worker.load_generation;
+            state.ab_repeat = AbRepeatState::default();
+            state.state = PlaybackUiState::Idle;
+            state.position_ms = 0;
+            state.duration_ms = 0;
+            state.queue_checkpoint = worker.queue.checkpoint(0);
+            state.message = "Sleep timer expired; playback stopped.".to_owned();
+        });
+    } else {
+        publish(snapshot, |state| {
+            state.sleep_timer_remaining_ms = None;
+            state.message = "Sleep timer expired.".to_owned();
+        });
+    }
+}
+
+fn set_cast_target(
+    address: Option<String>,
+    engine: &mut Option<VlcEngine>,
+    worker: &mut WorkerState,
+    snapshot: &Mutex<PlaybackSnapshot>,
+    runtime_error: &str,
+) {
+    if worker.cast_target == address {
+        return;
+    }
+    worker.cast_target = address.clone();
+    publish(snapshot, |state| state.cast_target = address.clone());
+
+    let active = !worker.restore_pending_play
+        && matches!(
+            lock_snapshot(snapshot).state,
+            PlaybackUiState::Loading | PlaybackUiState::Playing | PlaybackUiState::Paused
+        );
+    if !active {
+        publish(snapshot, |state| {
+            state.message = match address.as_deref() {
+                Some(target) => format!(
+                    "Cast output configured for {target}; receiver connection is not confirmed."
+                ),
+                None => "Local playback output selected.".to_owned(),
+            };
+        });
+        return;
+    }
+    let Some(engine) = engine.as_mut() else {
+        publish(snapshot, |state| state.message = runtime_error.to_owned());
+        return;
+    };
+
+    let paused = engine.state() == PlayerState::Paused;
+    let pending_position =
+        worker
+            .pending_seek
+            .and_then(|(_, track_id, generation, position_ms, _)| {
+                (Some(track_id) == worker.queue.current().map(|track| track.id)
+                    && generation == worker.load_generation)
+                    .then_some(position_ms)
+            });
+    let position_ms = pending_position.unwrap_or_else(|| engine.time_ms().max(0));
+    worker.generation = worker.generation.wrapping_add(1);
+    worker.load_generation = worker.load_generation.wrapping_add(1);
+    worker.ended_generation = None;
+    worker.ab_repeat = AbRepeatState::default();
+    worker.ab_repeat_load_generation = None;
+    cancel_pending_seek(
+        &mut worker.pending_seek,
+        snapshot,
+        "Seek was canceled because cast output changed.",
+    );
+    publish(snapshot, |state| {
+        state.load_generation = worker.load_generation;
+        state.ab_repeat = AbRepeatState::default();
+    });
+    if start_current(
+        engine,
+        &worker.queue,
+        worker.queue_revision,
+        worker.load_generation,
+        snapshot,
+        worker.playback_rate,
+    ) {
+        if position_ms > 0 {
+            bind_resume_seek(worker, Some(position_ms));
+            publish_checkpoint_position(&worker.queue, snapshot, position_ms);
+        }
+        if paused {
+            worker.pending_pause = Some((worker.load_generation, true));
+        }
+        publish(snapshot, |state| {
+            state.message = match address.as_deref() {
+                Some(target) => format!(
+                    "Cast output configured for {target}; receiver connection is not confirmed."
+                ),
+                None => "Local playback output selected.".to_owned(),
+            };
+        });
+    }
+}
+
 fn publish_control_result(snapshot: &Mutex<PlaybackSnapshot>, result: Result<(), String>) {
     publish(snapshot, |state| match result {
         Ok(()) => state.message.clear(),
@@ -1331,6 +2178,19 @@ fn publish_queue_snapshot(
         state.queue_revision = revision;
         state.repeat_mode = queue.repeat_mode();
         state.shuffle = queue.is_shuffled();
+        state.queue_checkpoint = queue.checkpoint(state.position_ms);
+    });
+}
+
+fn publish_checkpoint_position(
+    queue: &PlaybackQueue,
+    snapshot: &Mutex<PlaybackSnapshot>,
+    position_ms: i64,
+) {
+    let checkpoint = queue.checkpoint(position_ms);
+    publish(snapshot, |state| {
+        state.position_ms = position_ms.max(0);
+        state.queue_checkpoint = checkpoint;
     });
 }
 
@@ -1365,9 +2225,52 @@ fn publish_unavailable_current(
         }
         state.position_ms = 0;
         state.duration_ms = 0;
+        state.queue_checkpoint = queue.checkpoint(0);
         state.state = PlaybackUiState::Unavailable;
         state.message = runtime_error.to_owned();
     });
+}
+
+fn publish_ready_current(
+    queue: &PlaybackQueue,
+    revision: u64,
+    load_generation: u64,
+    snapshot: &Mutex<PlaybackSnapshot>,
+) {
+    publish_queue_snapshot(queue, revision, snapshot);
+    clear_media_snapshot(snapshot);
+    publish(snapshot, |state| {
+        state.load_generation = load_generation;
+        state.current_id = queue.current().map(|track| track.id);
+        state.current_is_video = queue.current().is_some_and(is_movie);
+        state.current_title = queue
+            .current()
+            .map(|track| track.title.clone())
+            .unwrap_or_default();
+        state.position_ms = 0;
+        state.duration_ms = 0;
+        state.queue_checkpoint = queue.checkpoint(0);
+        state.state = PlaybackUiState::Idle;
+        state.message = "Queue restored. Press Play to resume.".to_owned();
+    });
+}
+
+fn apply_pending_pause(worker: &mut WorkerState, engine: &VlcEngine) {
+    let Some((generation, paused)) = worker.pending_pause else {
+        return;
+    };
+    if generation != worker.load_generation {
+        worker.pending_pause = None;
+        return;
+    }
+    let player_state = engine.state();
+    if pending_pause_satisfied(paused, player_state)
+        || matches!(player_state, PlayerState::Ended | PlayerState::Error)
+    {
+        worker.pending_pause = None;
+    } else if matches!(player_state, PlayerState::Playing | PlayerState::Paused) {
+        engine.set_paused(paused);
+    }
 }
 
 fn publish_empty_queue(
@@ -1387,6 +2290,7 @@ fn publish_empty_queue(
         state.current_title.clear();
         state.position_ms = 0;
         state.duration_ms = 0;
+        state.queue_checkpoint = queue.checkpoint(0);
         state.state = state_value;
         state.message = message.to_owned();
     });
@@ -1512,21 +2416,25 @@ fn start_current(
         state.state = PlaybackUiState::Loading;
         state.position_ms = 0;
         state.duration_ms = 0;
+        state.queue_checkpoint = queue.checkpoint(0);
         state.playback_rate = 1.0;
-        state.message = "Opening media file…".to_owned();
+        state.message = OPENING_MEDIA_MESSAGE.to_owned();
     });
 
-    match engine.play_after_stop(&track) {
+    let cast_target = lock_snapshot(snapshot).cast_target.clone();
+    match engine.play_after_stop_to(&track, cast_target.as_deref()) {
         Err(error) => {
+            let message = safe_vlc_error(&error, Some(&track));
             publish(snapshot, |state| {
                 state.state = PlaybackUiState::Error;
-                state.message = error.to_string();
+                state.message = message;
             });
             false
         }
         Ok(()) => {
             if let Err(error) = engine.set_playback_rate(playback_rate) {
-                publish(snapshot, |state| state.message = error.to_string());
+                let message = safe_vlc_error(&error, Some(&track));
+                publish(snapshot, |state| state.message = message);
             } else {
                 publish(snapshot, |state| state.playback_rate = playback_rate);
             }
@@ -1548,14 +2456,18 @@ fn apply_seek(
             publish_player_position(engine, queue, snapshot, "");
             publish(snapshot, |state| {
                 state.position_ms = position_ms;
+                state.queue_checkpoint = queue.checkpoint(position_ms);
                 state.message.clear();
                 state.seek_ack = acknowledgement(request_id, true);
             });
         }
-        Err(error) => publish(snapshot, |state| {
-            state.message = error.to_string();
-            state.seek_ack = acknowledgement(request_id, false);
-        }),
+        Err(error) => {
+            let message = safe_vlc_error(&error, queue.current());
+            publish(snapshot, |state| {
+                state.message = message;
+                state.seek_ack = acknowledgement(request_id, false);
+            });
+        }
     }
 }
 
@@ -1580,6 +2492,7 @@ fn publish_player_position(
         state.queue_len = queue.len();
         state.position_ms = position_ms;
         state.duration_ms = duration_ms;
+        state.queue_checkpoint = queue.checkpoint(position_ms);
         if !message.is_empty() {
             state.message = message.to_owned();
         }
@@ -1607,6 +2520,7 @@ fn publish_player_state(
         current.queue_len = queue.len();
         current.position_ms = position_ms;
         current.duration_ms = duration_ms;
+        current.queue_checkpoint = queue.checkpoint(position_ms);
         current.state = match state {
             PlayerState::Playing => PlaybackUiState::Playing,
             PlayerState::Paused => PlaybackUiState::Paused,
@@ -1615,30 +2529,64 @@ fn publish_player_state(
             PlayerState::Error => PlaybackUiState::Error,
             PlayerState::Stopped | PlayerState::Other => PlaybackUiState::Idle,
         };
-        if matches!(state, PlayerState::Playing | PlayerState::Paused)
-            && current.message == "Opening media file…"
-        {
-            current.message.clear();
+        if matches!(state, PlayerState::Playing | PlayerState::Paused) {
+            clear_opening_media_message(&mut current.message);
         }
     });
+}
+
+fn clear_opening_media_message(message: &mut String) {
+    if message == OPENING_MEDIA_MESSAGE {
+        message.clear();
+    }
+}
+
+fn publish_player_error(
+    engine: &VlcEngine,
+    queue: &PlaybackQueue,
+    cast_target_configured: bool,
+    snapshot: &Mutex<PlaybackSnapshot>,
+) {
+    let network_source = queue
+        .current()
+        .is_some_and(|track| matches!(&track.source, TrackSource::Network(_)));
+    let error = if cast_target_configured || network_source {
+        String::new()
+    } else {
+        engine.error_message()
+    };
+    let message = if cast_target_configured {
+        "VLC could not stream to the configured cast target. Check the receiver address and that the Chromecast stream output plugin is installed.".to_owned()
+    } else if error.is_empty() {
+        "VLC could not decode this media or open an audio output. Check the VLC plugins installation.".to_owned()
+    } else {
+        format!("VLC reported a playback error: {error}")
+    };
+    publish_player_position(engine, queue, snapshot, &message);
+    publish(snapshot, |state| state.state = PlaybackUiState::Error);
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        bind_resume_seek, cancel_pending_seek, current_media_matches, ensure_queue_revision,
-        handle_command, pending_seek_waits_for_ready, prepare_replay, publish_queue_snapshot,
-        queue_jump, queue_move, queue_remove, seek_target_ms, send_command, valid_media_delay,
-        valid_playback_rate, valid_volume_percent, PlaybackCommand, PlaybackSnapshot,
-        PlaybackUiState, PlayerState, WorkerState, MAX_MEDIA_DELAY_US, MAX_PLAYBACK_RATE,
-        MAX_VOLUME_PERCENT, MIN_PLAYBACK_RATE, MIN_VOLUME_PERCENT, RESUME_SEEK_READY_TIMEOUT,
+        bind_resume_seek, cancel_pending_seek, clear_opening_media_message, current_media_matches,
+        ensure_queue_revision, handle_command, pause_intent_action, pending_pause_satisfied,
+        pending_seek_waits_for_ready, prepare_replay, publish_queue_snapshot, queue_jump,
+        queue_move, queue_remove, safe_vlc_error, seek_target_ms, send_command, set_cast_target,
+        update_sleep_timer, valid_cast_address, valid_equalizer_gain, valid_equalizer_settings,
+        valid_media_delay, valid_playback_rate, valid_sleep_timer_duration, valid_volume_percent,
+        AbRepeatState, EqualizerSettings, FrameMailbox, PauseIntentAction, PlaybackCommand,
+        PlaybackSnapshot, PlaybackUiState, PlayerState, WorkerState, MAX_MEDIA_DELAY_US,
+        MAX_PLAYBACK_RATE, MAX_SLEEP_TIMER_MS, MAX_VOLUME_PERCENT, MIN_PLAYBACK_RATE,
+        MIN_VOLUME_PERCENT, OPENING_MEDIA_MESSAGE, RESUME_SEEK_READY_TIMEOUT,
         RESUME_SEEK_REQUEST_ID,
     };
-    use crate::model::Track;
-    use crate::playback::queue::{PlaybackQueue, RepeatMode};
+    use crate::model::{Track, TrackSource};
+    use crate::playback::ffi::VlcError;
+    use crate::playback::queue::{PlaybackQueue, QueueCheckpoint, RepeatMode};
     use std::path::PathBuf;
     use std::sync::{mpsc, Arc, Mutex};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn track(id: i32) -> Track {
         Track {
@@ -1646,6 +2594,7 @@ mod tests {
             path: PathBuf::from(format!("track-{id}.mp4")),
             title: format!("Track {id}"),
             format: "MP4".to_owned(),
+            source: TrackSource::Local,
         }
     }
 
@@ -1671,6 +2620,248 @@ mod tests {
     }
 
     #[test]
+    fn equalizer_timer_and_cast_inputs_are_bounded() {
+        let mut settings = EqualizerSettings::default();
+        assert!(valid_equalizer_settings(&settings));
+        settings.bands_db[9] = 20.0;
+        assert!(valid_equalizer_settings(&settings));
+        settings.preamp_db = f32::NAN;
+        assert!(!valid_equalizer_settings(&settings));
+        assert!(!valid_equalizer_gain(f32::INFINITY));
+
+        assert!(valid_sleep_timer_duration(1));
+        assert!(valid_sleep_timer_duration(MAX_SLEEP_TIMER_MS));
+        assert!(!valid_sleep_timer_duration(0));
+        assert!(!valid_sleep_timer_duration(MAX_SLEEP_TIMER_MS + 1));
+
+        assert!(valid_cast_address("192.168.1.25"));
+        assert!(valid_cast_address("chromecast.home"));
+        assert!(!valid_cast_address("chromecast.home:8009"));
+        assert!(!valid_cast_address("cast};:sout=#file"));
+        assert!(!valid_cast_address(" host.local"));
+    }
+
+    #[test]
+    fn ab_repeat_accepts_only_an_ordered_positive_range() {
+        assert_eq!(
+            AbRepeatState {
+                a_ms: Some(100),
+                b_ms: Some(500),
+            }
+            .range(),
+            Some((100, 500))
+        );
+        assert_eq!(
+            AbRepeatState {
+                a_ms: Some(500),
+                b_ms: Some(500),
+            }
+            .range(),
+            None
+        );
+        assert_eq!(
+            AbRepeatState {
+                a_ms: Some(-1),
+                b_ms: Some(500),
+            }
+            .range(),
+            None
+        );
+    }
+
+    #[test]
+    fn ordered_pause_intents_are_idempotent_and_idle_pause_does_not_start() {
+        let first_play = pause_intent_action(false, true, false, PlayerState::Paused, false);
+        let second_play_before_ack =
+            pause_intent_action(false, true, false, PlayerState::Paused, false);
+        assert_eq!(first_play, PauseIntentAction::SetPaused(false));
+        assert_eq!(second_play_before_ack, first_play);
+        assert_eq!(
+            pause_intent_action(true, true, false, PlayerState::Playing, false),
+            PauseIntentAction::SetPaused(true)
+        );
+        assert_eq!(
+            pause_intent_action(false, true, false, PlayerState::Playing, false),
+            PauseIntentAction::SetPaused(false),
+            "Play must override a queued Pause while VLC still reports Playing"
+        );
+        assert_eq!(
+            pause_intent_action(false, true, false, PlayerState::Paused, false),
+            PauseIntentAction::SetPaused(false)
+        );
+        assert_eq!(
+            pause_intent_action(true, true, false, PlayerState::Paused, false),
+            PauseIntentAction::SetPaused(true),
+            "Pause must override a queued Play while VLC still reports Paused"
+        );
+        assert_eq!(
+            pause_intent_action(true, true, false, PlayerState::Stopped, true),
+            PauseIntentAction::SetPaused(true),
+            "A loading item must keep desired pause despite stale Stopped"
+        );
+        assert!(pending_pause_satisfied(true, PlayerState::Paused));
+        assert!(!pending_pause_satisfied(true, PlayerState::Playing));
+        assert!(pending_pause_satisfied(false, PlayerState::Playing));
+        assert!(!pending_pause_satisfied(false, PlayerState::Paused));
+
+        assert_eq!(
+            pause_intent_action(true, true, true, PlayerState::Stopped, false),
+            PauseIntentAction::Noop,
+            "Pause on a restored idle queue must not start playback"
+        );
+        assert_eq!(
+            pause_intent_action(false, false, false, PlayerState::Stopped, false),
+            PauseIntentAction::Noop
+        );
+    }
+
+    #[test]
+    fn removing_current_from_restored_or_stopped_queue_keeps_play_pending() {
+        let tracks = vec![track(1), track(2)];
+        let mut source_queue = PlaybackQueue::default();
+        assert!(source_queue.replace(tracks.clone(), 0));
+        let checkpoint = source_queue.checkpoint(7_000);
+        let frames = FrameMailbox::default();
+        let mut engine = None;
+        let mut restored_worker = WorkerState::default();
+        let restored_snapshot = Mutex::new(PlaybackSnapshot::default());
+        handle_command(
+            PlaybackCommand::RestoreQueue {
+                tracks: tracks.clone(),
+                checkpoint,
+            },
+            &mut engine,
+            &mut restored_worker,
+            &restored_snapshot,
+            &frames,
+            "VLC unavailable",
+        );
+        let revision = restored_worker.queue_revision;
+        handle_command(
+            PlaybackCommand::QueueRemove {
+                revision,
+                position: 0,
+            },
+            &mut engine,
+            &mut restored_worker,
+            &restored_snapshot,
+            &frames,
+            "VLC unavailable",
+        );
+        let restored_snapshot = restored_snapshot.lock().unwrap();
+        assert!(restored_worker.restore_pending_play);
+        assert_eq!(restored_worker.queue.current().unwrap().id, 2);
+        assert_eq!(restored_snapshot.current_id, Some(2));
+        assert_eq!(restored_snapshot.queue_checkpoint.position_ms, 0);
+
+        let mut stopped_worker = WorkerState::default();
+        assert!(stopped_worker.queue.replace(tracks.clone(), 0));
+        stopped_worker.queue_revision = 1;
+        stopped_worker.restore_pending_play = true;
+        let stopped_snapshot = Mutex::new(PlaybackSnapshot {
+            current_id: Some(1),
+            queue_len: 2,
+            state: PlaybackUiState::Idle,
+            ..PlaybackSnapshot::default()
+        });
+        handle_command(
+            PlaybackCommand::QueueRemove {
+                revision: 1,
+                position: 0,
+            },
+            &mut engine,
+            &mut stopped_worker,
+            &stopped_snapshot,
+            &frames,
+            "VLC unavailable",
+        );
+        let stopped_snapshot = stopped_snapshot.lock().unwrap();
+        assert!(stopped_worker.restore_pending_play);
+        assert_eq!(stopped_worker.queue.current().unwrap().id, 2);
+        assert_eq!(stopped_snapshot.current_id, Some(2));
+        assert_eq!(stopped_snapshot.queue_checkpoint.position_ms, 0);
+    }
+
+    #[test]
+    fn opening_message_is_cleared_once_playback_is_active() {
+        let mut message = OPENING_MEDIA_MESSAGE.to_owned();
+        clear_opening_media_message(&mut message);
+        assert!(message.is_empty());
+
+        let mut other_message = "A playback warning".to_owned();
+        clear_opening_media_message(&mut other_message);
+        assert_eq!(other_message, "A playback warning");
+    }
+
+    #[test]
+    fn sleep_timer_expiry_keeps_a_restored_queue_ready_without_autoplay() {
+        let mut worker = WorkerState::default();
+        assert!(worker.queue.replace(vec![track(1)], 0));
+        worker.restore_pending_play = true;
+        worker.restored_position_ms = 1_234;
+        worker.sleep_timer_deadline = Some(Instant::now() - Duration::from_millis(1));
+        let mut engine = None;
+        let snapshot = PlaybackSnapshot {
+            position_ms: 1_234,
+            ..PlaybackSnapshot::default()
+        };
+        let snapshot = Mutex::new(snapshot);
+
+        update_sleep_timer(&mut engine, &mut worker, &snapshot);
+
+        let state = snapshot.lock().expect("snapshot should not be poisoned");
+        assert!(worker.restore_pending_play);
+        assert_eq!(worker.restored_position_ms, 1_234);
+        assert_eq!(state.position_ms, 1_234);
+        assert_eq!(state.sleep_timer_remaining_ms, None);
+        assert_eq!(state.state, PlaybackUiState::Idle);
+    }
+
+    #[test]
+    fn changing_cast_target_does_not_autoplay_a_restored_queue() {
+        let mut worker = WorkerState::default();
+        assert!(worker.queue.replace(vec![track(1)], 0));
+        worker.restore_pending_play = true;
+        worker.restored_position_ms = 2_000;
+        let mut engine = None;
+        let snapshot = Mutex::new(PlaybackSnapshot::default());
+
+        set_cast_target(
+            Some("192.168.1.25".to_owned()),
+            &mut engine,
+            &mut worker,
+            &snapshot,
+            "VLC unavailable",
+        );
+
+        assert!(worker.restore_pending_play);
+        assert_eq!(worker.restored_position_ms, 2_000);
+        assert_eq!(worker.cast_target.as_deref(), Some("192.168.1.25"));
+        assert_eq!(
+            snapshot
+                .lock()
+                .expect("snapshot should not be poisoned")
+                .cast_target
+                .as_deref(),
+            Some("192.168.1.25")
+        );
+    }
+
+    #[test]
+    fn network_playback_errors_never_expose_url_queries() {
+        let track = Track::from_network_url(8, "https://media.example/live?token=secret")
+            .expect("network URL should be accepted");
+        let error = VlcError::PlaybackFailed(
+            "failed to open https://media.example/live?token=secret".to_owned(),
+        );
+
+        let message = safe_vlc_error(&error, Some(&track));
+
+        assert!(!message.contains("secret"));
+        assert!(!message.contains("https://"));
+    }
+
+    #[test]
     fn invalid_controls_do_not_enter_the_bounded_command_queue() {
         let (sender, receiver) = mpsc::sync_channel(1);
         let snapshot = Arc::new(Mutex::new(PlaybackSnapshot::default()));
@@ -1692,6 +2883,15 @@ mod tests {
                 tracks: vec![track(1)],
                 start_index: 0,
                 resume_position_ms: Some(-1),
+            },
+            &snapshot
+        )
+        .is_err());
+        assert!(send_command(
+            &sender,
+            PlaybackCommand::RestoreQueue {
+                tracks: vec![track(1)],
+                checkpoint: QueueCheckpoint::default(),
             },
             &snapshot
         )
@@ -1955,6 +3155,46 @@ mod tests {
         assert_eq!(snapshot.queue_revision, 12);
         assert_eq!(snapshot.repeat_mode, RepeatMode::All);
         assert!(snapshot.shuffle);
+        assert_eq!(snapshot.queue_checkpoint.entry_ids, [1, 2, 3]);
+        assert_eq!(snapshot.queue_checkpoint.order[0], 2);
+    }
+
+    #[test]
+    fn restore_keeps_the_saved_queue_idle_until_explicit_play() {
+        let tracks = vec![track(1), track(2), track(1)];
+        let checkpoint = QueueCheckpoint {
+            entry_ids: vec![1, 2, 1],
+            order: vec![2, 1, 0],
+            position: Some(1),
+            wrapped_from_end: false,
+            repeat_mode: RepeatMode::All,
+            shuffle: true,
+            position_ms: 8_765,
+        };
+        let mut worker = WorkerState::default();
+        let mut engine = None;
+        let snapshot = Mutex::new(PlaybackSnapshot::default());
+        let frames = crate::playback::frame::FrameMailbox::default();
+
+        handle_command(
+            PlaybackCommand::RestoreQueue { tracks, checkpoint },
+            &mut engine,
+            &mut worker,
+            &snapshot,
+            &frames,
+            "runtime unavailable",
+        );
+
+        assert!(worker.restore_pending_play);
+        assert_eq!(worker.pending_seek, None);
+        assert_eq!(worker.queue.current_index(), Some(1));
+        assert_eq!(worker.queue.current().unwrap().id, 2);
+        let snapshot = snapshot.lock().unwrap();
+        assert!(snapshot.queue_restored);
+        assert_eq!(snapshot.current_id, Some(2));
+        assert_eq!(snapshot.position_ms, 8_765);
+        assert_eq!(snapshot.queue_checkpoint.position_ms, 8_765);
+        assert_eq!(snapshot.state, PlaybackUiState::Unavailable);
     }
 
     #[test]

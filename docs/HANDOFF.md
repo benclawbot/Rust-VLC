@@ -1,5 +1,7 @@
 # Luna Max implementation hand-off
 
+Current integration, 2026-10-26: version 0.1.2 includes the approved review fixes and expanded P01/P02/P04 implementation. Queue/root persistence, typed network sources, subtitle provider code, OS media bridge and new tool controls must be assessed together. The older implementation summary below is the 0.1.1 baseline. Parent owns final integration/native checks, documentation and authorized publication; exact Luna Max workers implement repairs and Sol xhigh reviewers assess frozen source. Parental/PIN locking and paired LAN remote control are outside this release by the user's explicit choice.
+
 The user selected **Archive** on 2026-10-20 and required audio support. The latest visual target is `design/proposals/archive.html`: the proposal sidebar is removed, a prominent Movies/Music switch sits above the collection, and Music has artwork-led views and a Playlists section. Double-clicking a movie starts it in fullscreen; leaving fullscreen keeps playback running. Clicking a song starts it immediately. Each track row starts with a checkbox; Select all acts on displayed rows, Play selected queues checked displayed rows in order, and selected tracks can be added to a new or listbox-selected playlist. An opened playlist can shuffle its stored track order. The HTML controls are a sample preview; production code uses Slint.
 
 ## Required roles
@@ -79,7 +81,7 @@ findings, say so and list missing verification. Review only the fixed revision.
 
 The application imports local audio/video files and folders, reads tags/artwork, persists its library/playlists/progress, groups movies into series/seasons and music into albums/artists/genres, and runs both through one libVLC owner. Displayed-row selection, duplicate playlist occurrences, stored playlist shuffle, playback queue editing, fullscreen and core subtitle/audio tools are wired into Slint. TMDB's masked Read Access Token is saved from Options through the system credential store. Music artwork is matched automatically from public YouTube results, then may fall back to MusicBrainz/Cover Art Archive; users do not paste per-track links.
 
-The implementation uses flat modules rather than the speculative subdirectories in the task catalogue. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current ownership and APIs. Persistent roots/reconciliation, queue restoration, full settings and P01–P04 are still open. The HTML preview defines composition; it does not prove native playback or performance. Windows smoke evidence does not close the Arch Wayland/X11 or macOS gates.
+The implementation uses flat modules rather than the speculative subdirectories in the task catalogue. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current ownership and APIs. Version 0.1.2 implements persistent roots/reconciliation, queue restoration and the approved P01/P02/P04 controls; native acceptance remains in validation. P03 is explicitly excluded. The HTML preview defines composition; it does not prove native playback or performance. Windows smoke evidence does not close the Arch Wayland/X11 or macOS gates.
 
 ## Integration and completion
 

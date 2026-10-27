@@ -74,6 +74,7 @@ mod tests {
 
     fn track(id: i32, title: &str) -> Track {
         Track {
+            source: crate::model::TrackSource::Local,
             id,
             path: PathBuf::from(format!("{title}.mp3")),
             title: title.to_owned(),
