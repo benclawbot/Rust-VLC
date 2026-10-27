@@ -94,7 +94,7 @@ jobs:
           cp assets/fonts/OFL.txt "$package/Inter-OFL.txt"
           printf 'Target: %s\nVersion: %s\nSource commit: %s\n' "${{ matrix.target }}" "$version" "$GITHUB_SHA" > "$package/BUILD-INFO.txt"
           test "$(sed -n 's/^pkgver=//p' "$package/PKGBUILD")" = "$version"
-          docker run --rm -e BUILD_UID="$(id -u)" -e BUILD_GID="$(id -g)" -v "$package:/build" archlinux:base-devel bash -lc '
+          docker run --rm -e BUILD_UID="$(id -u)" -e BUILD_GID="$(id -g)" -e PACKAGE_VERSION="$version" -e PACKAGE_TARGET="${{ matrix.target }}" -e SOURCE_SHA="$GITHUB_SHA" -v "$package:/build" archlinux:base-devel bash -lc '
             set -euo pipefail
             pacman -Syu --noconfirm base-devel libvlc vlc-plugins-all fontconfig libglvnd libx11 libxcb libxcursor libxi libxkbcommon libxkbcommon-x11 wayland
             if ldd /build/rust-vlc | grep -q "not found"; then ldd /build/rust-vlc; exit 1; fi
@@ -102,10 +102,26 @@ jobs:
             chown -R builder:builder /build
             su - builder -c "cd /build && makepkg --noconfirm --cleanbuild --nodeps"
             chown -R "$BUILD_UID:$BUILD_GID" /build
+            package="/build/rust-vlc-${PACKAGE_VERSION}-1-x86_64.pkg.tar.zst"
+            test "$(find /build -maxdepth 1 -type f -name "*.pkg.tar.zst" | wc -l)" -eq 1
+            test -f "$package"
+            contents="$(tar --zstd -tf "$package")"
+            for required in usr/bin/rust-vlc usr/share/applications/rust-vlc.desktop usr/share/icons/hicolor/512x512/apps/rust-vlc.png usr/share/doc/rust-vlc/BUILD-INFO.txt; do
+              grep -Fxq "$required" <<< "$contents"
+            done
+            pkginfo="$(tar --zstd -xOf "$package" .PKGINFO)"
+            grep -Fxq "pkgname = rust-vlc" <<< "$pkginfo"
+            grep -Fxq "pkgbase = rust-vlc" <<< "$pkginfo"
+            grep -Fxq "pkgver = ${PACKAGE_VERSION}-1" <<< "$pkginfo"
+            grep -Fxq "arch = x86_64" <<< "$pkginfo"
+            build_info="$(tar --zstd -xOf "$package" usr/share/doc/rust-vlc/BUILD-INFO.txt)"
+            grep -Fxq "Target: ${PACKAGE_TARGET}" <<< "$build_info"
+            grep -Fxq "Version: ${PACKAGE_VERSION}" <<< "$build_info"
+            grep -Fxq "Source commit: ${SOURCE_SHA}" <<< "$build_info"
           '
-          package_file="$(find "$package" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -quit)"
-          test -n "$package_file"
           installer="rust-vlc-${version}-1-x86_64.pkg.tar.zst"
+          package_file="$package/$installer"
+          test -f "$package_file"
           mv "$package_file" "dist/$installer"
           (cd dist && sha256sum "$installer" > "$installer.sha256")
 

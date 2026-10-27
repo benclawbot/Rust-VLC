@@ -3,6 +3,7 @@ pkgver=0.1.2
 pkgrel=1
 pkgdesc='Local movie and music player built with Rust and libVLC'
 arch=('x86_64')
+options=('!debug')
 url='https://github.com/benclawbot/Rust-VLC'
 license=('unknown')
 depends=('libvlc>=3.0' 'libvlc<4' 'vlc-plugins-all>=3.0' 'vlc-plugins-all<4' 'fontconfig' 'libglvnd' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxkbcommon' 'libxkbcommon-x11' 'wayland')
